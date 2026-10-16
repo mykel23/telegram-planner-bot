@@ -68,9 +68,10 @@ flowchart LR
 | `the deck is due Friday` / `I'd like to do the deck Wednesday` | Sets a task's latest day or preferred day |
 | `what's on today?` | Shows today's list |
 | `/today` `/week` `/month` `/lists` | Shows lists |
+| `/edit` | Guided edit: pick a task by number, then change its rank, preferred day, latest day, name or list |
 | `/checkin` | Starts the weekly check-in now |
 | `/daily` | Sends the morning message now |
-| `/cancel` | Stops a check-in in progress |
+| `/cancel` | Stops a check-in or edit in progress |
 
 Ranks go from 1 (most important) to 5.
 

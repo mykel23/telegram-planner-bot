@@ -107,9 +107,10 @@ export const HELP_TEXT = [
   "",
   "<b>Commands</b>",
   "/today /week /month /lists: show your lists",
+  "/edit: change a task's rank, days, name or list",
   "/checkin: start the weekly check-in now",
   "/daily: send the morning message now",
-  "/cancel: stop a check-in in progress",
+  "/cancel: stop a check-in or edit in progress",
   "",
   "Ranks go from 1 (most important) to 5.",
 ].join("\n");

@@ -1,5 +1,6 @@
 import { cancelCheckin, getCheckin, handleCheckinReply, startCheckin } from "./checkin";
 import { type Action, type Interpretation, interpretMessage } from "./claude";
+import { cancelEdit, getEdit, handleEditReply, startEdit } from "./edit";
 import { addTask, clampRank, deleteTask, getState, listActiveTasks, setState, updateTask } from "./db";
 import type { Env, Horizon, Task } from "./env";
 import { HELP_TEXT, escapeHtml, formatAllLists, formatDailyMessage, formatList, horizonLabel } from "./format";
@@ -75,16 +76,25 @@ export async function respond(env: Env, text: string): Promise<string> {
     case "/daily":
       return formatDailyMessage(await listActiveTasks(env.DB), friendlyDate(new Date(), env.TIMEZONE), labels);
     case "/checkin":
+      await cancelEdit(env);
       return startCheckin(env);
+    case "/edit":
+      if (await getCheckin(env)) return "Finish the check-in first, or send /cancel to stop it.";
+      return startEdit(env, labels.iso.day);
     case "/cancel": {
-      const active = await getCheckin(env);
-      await cancelCheckin(env);
-      return active ? "Check-in cancelled. Nothing new was saved." : "There's nothing to cancel.";
+      const [checkinActive, editActive] = await Promise.all([getCheckin(env), getEdit(env)]);
+      await Promise.all([cancelCheckin(env), cancelEdit(env)]);
+      if (checkinActive) return "Check-in cancelled. Nothing new was saved.";
+      if (editActive) return "Edit stopped. Changes you already confirmed are kept.";
+      return "There's nothing to cancel.";
     }
   }
 
   const checkin = await getCheckin(env);
   if (checkin) return handleCheckinReply(env, checkin, text);
+
+  const editing = await getEdit(env);
+  if (editing) return handleEditReply(env, editing, text);
 
   const tasks = await listActiveTasks(env.DB);
   let interpretation: Interpretation;
