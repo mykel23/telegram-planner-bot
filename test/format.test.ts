@@ -17,12 +17,12 @@ const tasks: Task[] = [
 describe("formatDailyMessage", () => {
   it("shows current work, today's ranked list and what's next", () => {
     const msg = formatDailyMessage(tasks, "Friday, Oct 16", labels);
-    expect(msg).toContain("Week: Mon, Oct 12 – Sun, Oct 18 · Month: October 2026");
+    expect(msg).toContain("This week: Mon, Oct 12 – Sun, Oct 18 (October 2026)");
     expect(msg).toContain("Friday, Oct 16");
     expect(msg).toContain("Currently working on");
     expect(msg).toContain("1. Finish &lt;deck&gt;");
     expect(msg).toContain("2. Call bank");
-    expect(msg).toContain("Up next this week");
+    expect(msg).toContain("Coming up later this week</b> <i>(through Sun, Oct 18)</i>");
     expect(msg).toContain("Plan Q1");
   });
 

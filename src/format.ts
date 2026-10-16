@@ -97,7 +97,7 @@ export function formatDailyMessage(tasks: Task[], dateLabel: string, labels: Per
 
   const parts = [
     `☀️ <b>Good morning!</b> Here's your plan for ${escapeHtml(dateLabel)}.\n` +
-      `<i>Week: ${escapeHtml(labels.week)} · Month: ${escapeHtml(labels.month)}</i>`,
+      `<i>This week: ${escapeHtml(labels.week)} (${escapeHtml(labels.month)})</i>`,
   ];
 
   if (tasks.length === 0) {
@@ -118,7 +118,8 @@ export function formatDailyMessage(tasks: Task[], dateLabel: string, labels: Per
     );
   }
   if (upNext.length) {
-    parts.push(`<b>📅 Up next this week</b>\n${upNext.map(line).join("\n")}`);
+    const sunday = labels.week.split(" – ")[1] ?? "Sunday";
+    parts.push(`<b>📅 Coming up later this week</b> <i>(through ${escapeHtml(sunday)})</i>\n${upNext.map(line).join("\n")}`);
   }
   parts.push(`<i>Reply "done with …", "add …", or "what's on today?" anytime.</i>`);
   return parts.join("\n\n");
