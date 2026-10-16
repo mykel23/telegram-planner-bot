@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { interpretWithRules } from "../src/fallback";
-import { addedText, areaFromZipResponse, parseZip, splitGroceryItems, storeQuestion, storeRows, storesFromOsm } from "../src/grocery";
+import { addedText, areaFromZipResponse, parseZip, photonToOsm, splitGroceryItems, storeQuestion, storeRows, storesFromOsm } from "../src/grocery";
 import { finishButtons } from "../src/views";
 import { describeWeather, weatherLine } from "../src/weather";
 import type { Task } from "../src/env";
@@ -68,6 +68,18 @@ describe("stores near a ZIP code", () => {
     };
     expect(storesFromOsm(sample, 41.8858, -87.6181)).toEqual(["Mariano's", "Jewel-Osco", "Aldi"]);
     expect(storesFromOsm({}, 0, 0)).toEqual([]);
+    // Over 10 miles away is left out.
+    expect(storesFromOsm(sample, 41.8858, -87.6181, 1)).toEqual(["Mariano's"]);
+  });
+
+  it("reads Photon results the same way", () => {
+    const photon = {
+      features: [
+        { geometry: { coordinates: [-87.63, 41.87] }, properties: { name: "Aldi", osm_value: "supermarket" } },
+        { geometry: { coordinates: [-88.9, 42.9] }, properties: { name: "Far Away Foods" } },
+      ],
+    };
+    expect(storesFromOsm(photonToOsm(photon), 41.8858, -87.6181, 10)).toEqual(["Aldi"]);
   });
 });
 

@@ -1,5 +1,5 @@
 import { handleUpdate } from "./bot";
-import { ensureSchema, recentSends } from "./db";
+import { ensureSchema, getState, recentSends } from "./db";
 import type { Env } from "./env";
 import { runSchedule } from "./schedule";
 import { setWebhook, type TelegramUpdate } from "./telegram";
@@ -57,7 +57,12 @@ export default {
         return new Response("Forbidden", { status: 403 });
       }
       await ensureSchema(env.DB);
-      return json({ timezone: env.TIMEZONE, recent_sends: await recentSends(env.DB) });
+      const storeSearch = await getState(env.DB, "grocery_search_errors");
+      return json({
+        timezone: env.TIMEZONE,
+        recent_sends: await recentSends(env.DB),
+        last_store_search_problem: storeSearch ? JSON.parse(storeSearch) : null,
+      });
     }
 
     if (url.pathname === "/") return new Response("Planner bot is running.");

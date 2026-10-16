@@ -132,10 +132,10 @@ function miles(aLat: number, aLon: number, bLat: number, bLon: number): number {
 }
 
 /** Most nearby stores offered as buttons. */
-const MAX_NEARBY = 8;
+const MAX_NEARBY = 10;
 
 /** Grocery store names from an OpenStreetMap search, closest first, one per chain. */
-export function storesFromOsm(data: unknown, lat: number, lon: number): string[] {
+export function storesFromOsm(data: unknown, lat: number, lon: number, maxMiles = Infinity): string[] {
   const elements = (data as { elements?: OsmElement[] }).elements ?? [];
   const found = elements
     .map((e) => {
@@ -144,7 +144,7 @@ export function storesFromOsm(data: unknown, lat: number, lon: number): string[]
       const pLon = e.lon ?? e.center?.lon;
       return { name, distance: pLat != null && pLon != null ? miles(lat, lon, pLat, pLon) : 99 };
     })
-    .filter((s) => s.name.length > 0 && s.name.length <= 30)
+    .filter((s) => s.name.length > 0 && s.name.length <= 30 && s.distance <= maxMiles)
     .sort((a, b) => a.distance - b.distance);
   const names: string[] = [];
   for (const { name } of found) {
@@ -154,19 +154,88 @@ export function storesFromOsm(data: unknown, lat: number, lon: number): string[]
   return names;
 }
 
-/** Supermarkets within about 5 miles, from OpenStreetMap's Overpass API (free, no key). */
-export async function findNearbyStores(area: Area): Promise<string[]> {
-  const query =
-    `[out:json][timeout:20];` +
-    `nwr["shop"~"^(supermarket|wholesale|greengrocer)$"](around:8000,${area.lat},${area.lon});` +
-    `out center tags 200;`;
-  const res = await fetch("https://overpass-api.de/api/interpreter", {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded", "user-agent": USER_AGENT },
-    body: `data=${encodeURIComponent(query)}`,
+/** Public Overpass servers, tried in order: the main one is often busy. */
+const OVERPASS_SERVERS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.private.coffee/api/interpreter",
+  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+];
+
+/** One search attempt, with a time limit so a slow server doesn't stall the reply. */
+async function fetchJson(url: string, init: RequestInit = {}, seconds = 14): Promise<unknown> {
+  const res = await fetch(url, {
+    ...init,
+    headers: { "user-agent": USER_AGENT, ...(init.headers as Record<string, string>) },
+    signal: AbortSignal.timeout(seconds * 1000),
   });
-  if (!res.ok) throw new Error(`Store search failed (${res.status})`);
-  return storesFromOsm(await res.json(), area.lat, area.lon);
+  if (!res.ok) throw new Error(`${new URL(url).host} answered ${res.status}`);
+  return res.json();
+}
+
+interface PhotonFeature {
+  geometry?: { coordinates?: [number, number] };
+  properties?: { name?: string; osm_value?: string };
+}
+
+/** Photon results (komoot's free OpenStreetMap search) in the same shape as Overpass, so one parser handles both. */
+export function photonToOsm(data: unknown): { elements: OsmElement[] } {
+  const features = (data as { features?: PhotonFeature[] }).features ?? [];
+  return {
+    elements: features.map((f) => ({
+      lon: f.geometry?.coordinates?.[0],
+      lat: f.geometry?.coordinates?.[1],
+      tags: { name: f.properties?.name ?? "" },
+    })),
+  };
+}
+
+/** Farthest a store can be to count as nearby, in miles. */
+export const NEARBY_MILES = 10;
+const NEARBY_METERS = Math.round(NEARBY_MILES * 1609.34);
+
+/**
+ * Grocery stores within 10 miles, from OpenStreetMap (free, no key).
+ * Asks all the Overpass servers at once and takes the first good answer, then
+ * falls back to Photon. The whole search stays under about 25 seconds, the
+ * time a Worker gets to finish after answering Telegram. Errors are kept for /status.
+ */
+export async function findNearbyStores(env: Env, area: Area): Promise<string[]> {
+  const query =
+    `[out:json][timeout:12];` +
+    `nwr["shop"~"^(supermarket|wholesale|greengrocer)$"](around:${NEARBY_METERS},${area.lat},${area.lon});` +
+    `out tags center 300;`;
+  const errors: string[] = [];
+  const attempts = OVERPASS_SERVERS.map(async (server) => {
+    try {
+      const data = await fetchJson(server, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: `data=${encodeURIComponent(query)}`,
+      });
+      const stores = storesFromOsm(data, area.lat, area.lon, NEARBY_MILES);
+      if (stores.length) return stores;
+      throw new Error(`${new URL(server).host}: no stores`);
+    } catch (err) {
+      errors.push(String(err));
+      throw err;
+    }
+  });
+  try {
+    return await Promise.any(attempts);
+  } catch {
+    // Every Overpass server failed; try Photon.
+  }
+  try {
+    const url = `https://photon.komoot.io/api/?q=supermarket&osm_tag=shop:supermarket&limit=50&lat=${area.lat}&lon=${area.lon}`;
+    const stores = storesFromOsm(photonToOsm(await fetchJson(url, {}, 8)), area.lat, area.lon, NEARBY_MILES);
+    if (stores.length) return stores;
+    errors.push("photon: no stores");
+  } catch (err) {
+    errors.push(String(err));
+  }
+  console.error("findNearbyStores found nothing", errors);
+  await setState(env.DB, "grocery_search_errors", JSON.stringify({ at: new Date().toISOString(), zip: area.zip, errors }));
+  return [];
 }
 
 /** Saves the ZIP code and the stores near it. */
@@ -176,7 +245,7 @@ export async function setArea(env: Env, area: Area, nearby: string[]): Promise<v
 }
 
 export const ZIP_QUESTION =
-  `🛒 <b>What's your ZIP code?</b>\nI'll find the grocery stores near you and make them buttons. ` +
+  `🛒 <b>What's your ZIP code?</b>\nI'll find the grocery stores within 10 miles and make them buttons. ` +
   `Or tap <b>Skip</b> to add your stores yourself.`;
 
 /** Store name -> items ever bought there, oldest first. Append-only, so button positions stay valid. */

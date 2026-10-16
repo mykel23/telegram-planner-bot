@@ -30,7 +30,7 @@ To-do apps wait for you to open them. I wanted a planner that comes to me: a sho
 | **Buttons** | Check-ins and edits show tap buttons (Done, Tomorrow, Drop, ranks, weekdays), so most answers are one tap. |
 | **Tap to finish** | Every list and the morning message have a ✅ button per task. Tapping it marks the task done and redraws the list in place. |
 | **Weather** | The morning message includes the day's forecast (Open-Meteo, free, no key). `/weather` sets the city, or I can share my location. |
-| **Grocery list** | `/grocery` keeps a list grouped by store. The first time, it asks for my ZIP code and turns the grocery stores near me into buttons (OpenStreetMap, free, no key); I can add my own stores too. I pick a store first, then send several items at once ("milk, eggs and bread"). Each store remembers what I bought there and shows those items as ➕ buttons next time, so nothing is added without asking. In the store I tap ✅ to check items off. |
+| **Grocery list** | `/grocery` keeps a list grouped by store. The first time, it asks for my ZIP code and turns the grocery stores near me into buttons within 10 miles (OpenStreetMap, free, no key); I can add my own stores too. I pick a store first, then send several items at once ("milk, eggs and bread"). Each store remembers what I bought there and shows those items as ➕ buttons next time, so nothing is added without asking. In the store I tap ✅ to check items off. |
 
 ## Demo
 

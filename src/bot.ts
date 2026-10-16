@@ -267,8 +267,10 @@ async function setGroceryZip(env: Env, text: string): Promise<string | ViewReply
   }
   if (!area) return `I couldn't find ZIP code ${zip}. Please check it, or tap <b>Skip</b>.`;
   let nearby: string[] = [];
+  const owner = await getState(env.DB, OWNER_KEY);
+  if (owner) await sendMessage(env, owner, `🔎 Looking for grocery stores within 10 miles of ${escapeHtml(area.name)}…`);
   try {
-    nearby = await findNearbyStores(area);
+    nearby = await findNearbyStores(env, area);
   } catch (err) {
     console.error("findNearbyStores failed", err);
   }
@@ -279,7 +281,7 @@ async function setGroceryZip(env: Env, text: string): Promise<string | ViewReply
   const view = await groceryView(env);
   const found = nearby.length
     ? `📍 Found ${nearby.length} grocery ${nearby.length === 1 ? "store" : "stores"} near ${escapeHtml(area.name)}.`
-    : `📍 Saved ${escapeHtml(area.name)}, but I couldn't find stores nearby right now. Add yours with ➕ Add a store.`;
+    : `📍 Saved ${escapeHtml(area.name)}, but the store search didn't answer this time. Tap 📍 Change ZIP to try again, or ➕ Add a store to add yours.`;
   return { ...view, text: `${found}\n\n${view.text}` };
 }
 
