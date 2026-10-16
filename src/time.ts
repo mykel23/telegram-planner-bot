@@ -1,6 +1,6 @@
 /**
  * Time-zone helpers. Cloudflare cron triggers run in UTC, so the Worker runs
- * every hour and uses these helpers to decide whether it is time to send
+ * every minute and uses these helpers to decide whether it is time to send
  * something in the owner's local time zone (daylight saving included).
  */
 
@@ -33,7 +33,7 @@ export function localTime(now: Date, timeZone: string): LocalTime {
 
 /**
  * How many hours after the target hour a missed send may still go out.
- * If Cloudflare skips or delays one hourly run, the next run catches up,
+ * If Cloudflare skips or delays a run, the next run catches up,
  * but a message never arrives hours late.
  */
 export const CATCH_UP_HOURS = 2;

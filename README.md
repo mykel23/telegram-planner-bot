@@ -36,7 +36,7 @@ flowchart LR
     Me["📱 Me in Telegram"] <-->|messages| TG["Telegram Bot API"]
     TG -->|webhook| W["Cloudflare Worker"]
     W -->|replies| TG
-    Cron["⏰ Cron["⏰ Cron trigger<br/>every minute"]trigger<br/>every hour"] --> W
+    Cron["⏰ Cron trigger<br/>every minute"] --> W
     W <-->|tasks, ranks, status| DB[("Cloudflare D1")]
     W -->|"understand messages,<br/>build weekly lists"| C["Claude API"]
     W -->|voice notes| AI["Workers AI<br/>(Whisper)"]
