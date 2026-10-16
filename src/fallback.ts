@@ -3,7 +3,7 @@ import type { Recurring } from "./db";
 import type { Horizon, Task } from "./env";
 import { parseRepeatText, type RepeatRule } from "./recurring";
 import { parseReminderText } from "./reminders";
-import { localTime, type PeriodLabels } from "./time";
+import { dateFormat, localTime, type PeriodLabels } from "./time";
 
 /**
  * Rule-based backups for when the Claude API is unreachable.
@@ -81,7 +81,7 @@ function repeatFields(rule: RepeatRule): Pick<Action, "repeat_days" | "repeat_mo
 /** "2026-10-16 14:00" in the given time zone. */
 export function localStamp(when: Date, timeZone: string): string {
   const { date } = localTime(when, timeZone);
-  const clock = new Intl.DateTimeFormat("en-US", { timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(when);
+  const clock = dateFormat({ timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(when);
   return `${date} ${clock}`;
 }
 

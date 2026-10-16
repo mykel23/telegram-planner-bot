@@ -43,13 +43,19 @@ const MAX_LENGTH = 4000;
 
 export async function sendMessage(env: Env, chatId: number | string, html: string, keyboard?: Keyboard): Promise<void> {
   const text = html.length > MAX_LENGTH ? html.slice(0, MAX_LENGTH) + "\n…" : html;
-  await call(env, "sendMessage", {
-    chat_id: chatId,
-    text,
-    parse_mode: "HTML",
+  const extras = {
     link_preview_options: { is_disabled: true },
     ...(keyboard ? { reply_markup: replyMarkup(keyboard) } : {}),
-  });
+  };
+  try {
+    await call(env, "sendMessage", { chat_id: chatId, text, parse_mode: "HTML", ...extras });
+  } catch (err) {
+    // If Telegram rejects the formatting, still deliver the words as plain text.
+    if (!/can't parse entities/i.test(String(err))) throw err;
+    console.error("HTML rejected, sending plain text", err);
+    const plain = text.replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+    await call(env, "sendMessage", { chat_id: chatId, text: plain, ...extras });
+  }
 }
 
 function replyMarkup(keyboard: Keyboard) {

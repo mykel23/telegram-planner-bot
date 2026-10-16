@@ -4,6 +4,21 @@
  * something in the owner's local time zone (daylight saving included).
  */
 
+/**
+ * Date formatters are slow to create, and the Worker's CPU budget per run is
+ * small, so each one is built once and reused.
+ */
+const formatters = new Map<string, Intl.DateTimeFormat>();
+export function dateFormat(options: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
+  const key = JSON.stringify(options);
+  let f = formatters.get(key);
+  if (!f) {
+    f = new Intl.DateTimeFormat("en-US", options);
+    formatters.set(key, f);
+  }
+  return f;
+}
+
 export interface LocalTime {
   /** Local calendar date, YYYY-MM-DD. */
   date: string;
@@ -14,7 +29,7 @@ export interface LocalTime {
 }
 
 export function localTime(now: Date, timeZone: string): LocalTime {
-  const parts = new Intl.DateTimeFormat("en-US", {
+  const parts = dateFormat({
     timeZone,
     year: "numeric",
     month: "2-digit",
@@ -61,7 +76,7 @@ export function isWeeklyDue(
 
 /** "Friday, Oct 16" in the owner's time zone. */
 export function friendlyDate(now: Date, timeZone: string): string {
-  return new Intl.DateTimeFormat("en-US", {
+  return dateFormat({
     timeZone,
     weekday: "long",
     month: "short",
@@ -102,7 +117,7 @@ export function periodLabels(now: Date, timeZone: string, planAhead = false): Pe
   const monday = day - mondayOffset * DAY_MS;
   const sunday = monday + 6 * DAY_MS;
   const fmt = (t: number, options: Intl.DateTimeFormatOptions) =>
-    new Intl.DateTimeFormat("en-US", { timeZone: "UTC", ...options }).format(new Date(t));
+    dateFormat({ timeZone: "UTC", ...options }).format(new Date(t));
   const short: Intl.DateTimeFormatOptions = { weekday: "short", month: "short", day: "numeric" };
   const dayDate = new Date(day);
   const monthEnd = Date.UTC(dayDate.getUTCFullYear(), dayDate.getUTCMonth() + 1, 0);
@@ -222,7 +237,7 @@ export function zonedTimeToUtc(dateIso: string, hour: number, minute: number, ti
   const wanted = Date.UTC(y, m - 1, d, hour, minute);
   let guess = wanted;
   for (let i = 0; i < 2; i++) {
-    const parts = new Intl.DateTimeFormat("en-US", {
+    const parts = dateFormat({
       timeZone,
       year: "numeric",
       month: "2-digit",
@@ -241,11 +256,11 @@ export function zonedTimeToUtc(dateIso: string, hour: number, minute: number, ti
 /** "Fri 10/16, 2:00 PM" in the owner's time zone. */
 export function friendlyDateTime(when: Date, timeZone: string): string {
   const { date } = localTime(when, timeZone);
-  const clock = new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit" }).format(when);
+  const clock = dateFormat({ timeZone, hour: "numeric", minute: "2-digit" }).format(when);
   return `${shortDate(date)}, ${clock}`;
 }
 
 /** "2:05 PM" in the owner's time zone. */
 export function clockTime(when: Date, timeZone: string): string {
-  return new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit" }).format(when);
+  return dateFormat({ timeZone, hour: "numeric", minute: "2-digit" }).format(when);
 }
