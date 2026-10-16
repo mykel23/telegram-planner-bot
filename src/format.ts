@@ -170,7 +170,7 @@ export const HELP_TEXT = [
   "/capacity: how much you can take on this month",
   "/voice: pick a voice for spoken replies, or turn it off",
   "/checkin: start the weekly check-in now",
-  "/daily: send the morning message now",
+  "/morning: send the good morning message now",
   "/review: start the evening check-in now",
   "/cancel: stop a check-in, edit or evening review in progress",
   "",

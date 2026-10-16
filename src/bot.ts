@@ -160,6 +160,7 @@ export async function respond(env: Env, text: string, chatId: number | string = 
     case "/lists":
     case "/all":
       return formatAllLists(await listActiveTasks(env.DB), labels);
+    case "/morning":
     case "/daily": {
       const [tasks, cap] = [await listActiveTasks(env.DB), await dayCap(env)];
       const dateLabel = friendlyDate(new Date(), env.TIMEZONE);

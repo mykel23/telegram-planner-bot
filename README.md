@@ -97,7 +97,7 @@ flowchart LR
 | `/today` `/week` `/month` `/lists` | Shows lists |
 | `/edit` | Guided edit: pick a task by number, then change its rank, preferred day, latest day, name, list or category |
 | `/checkin` | Starts the weekly check-in now |
-| `/daily` | Sends the morning message now |
+| `/morning` | Sends the good morning message now |
 | `/review` | Starts the evening check-in now |
 | `/cancel` | Stops a check-in, edit or evening review in progress |
 
