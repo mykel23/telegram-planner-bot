@@ -68,8 +68,8 @@ describe("stores near a ZIP code", () => {
     };
     expect(storesFromOsm(sample, 41.8858, -87.6181)).toEqual(["Mariano's", "Jewel-Osco", "Aldi"]);
     expect(storesFromOsm({}, 0, 0)).toEqual([]);
-    // Over 10 miles away is left out.
-    expect(storesFromOsm(sample, 41.8858, -87.6181, 1)).toEqual(["Mariano's"]);
+    // Stores past the distance limit are left out.
+    expect(storesFromOsm(sample, 41.8858, -87.6181, 0.5)).toEqual(["Mariano's"]);
   });
 
   it("reads Photon results the same way", () => {
