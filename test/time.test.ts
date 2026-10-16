@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isDailyDue, isWeeklyDue, localTime, periodLabels } from "../src/time";
+import { isDailyDue, isWeeklyDue, localTime, parseDayAnswer, periodLabels } from "../src/time";
 
 const TZ = "America/Chicago";
 
@@ -89,6 +89,7 @@ describe("periodLabels", () => {
       day: "Thu, Oct 15",
       week: "Mon, Oct 12 – Sun, Oct 18",
       month: "October 2026",
+      iso: { day: "2026-10-15", weekStart: "2026-10-12", weekEnd: "2026-10-18", monthEnd: "2026-10-31" },
     });
   });
 
@@ -97,7 +98,7 @@ describe("periodLabels", () => {
   });
 
   it("looks ahead to next week on Sunday when planning", () => {
-    expect(periodLabels(new Date("2026-10-18T23:00:00Z"), TZ, true)).toEqual({
+    expect(periodLabels(new Date("2026-10-18T23:00:00Z"), TZ, true)).toMatchObject({
       day: "Mon, Oct 19",
       week: "Mon, Oct 19 – Sun, Oct 25",
       month: "October 2026",
@@ -105,11 +106,64 @@ describe("periodLabels", () => {
   });
 
   it("handles a week that crosses months and the daylight saving change", () => {
-    expect(periodLabels(new Date("2026-11-01T23:00:00Z"), TZ, true)).toEqual({
+    expect(periodLabels(new Date("2026-11-01T23:00:00Z"), TZ, true)).toMatchObject({
       day: "Mon, Nov 2",
       week: "Mon, Nov 2 – Sun, Nov 8",
       month: "November 2026",
     });
     expect(periodLabels(new Date("2026-10-30T15:00:00Z"), TZ).week).toBe("Mon, Oct 26 – Sun, Nov 1");
+  });
+});
+
+describe("parseDayAnswer", () => {
+  // Planning from Monday Oct 19
+  const from = "2026-10-19";
+  const date = (text: string) => {
+    const a = parseDayAnswer(text, from);
+    return a.kind === "date" ? a.date : a.kind;
+  };
+
+  it("reads weekdays as the next one on or after the planning day", () => {
+    expect(date("Mon")).toBe("2026-10-19");
+    expect(date("wednesday")).toBe("2026-10-21");
+    expect(date("Fri")).toBe("2026-10-23");
+    expect(date("sunday")).toBe("2026-10-25");
+    expect(date("next friday")).toBe("2026-10-30");
+  });
+
+  it("reads weekdays after a given day, for the latest-day question", () => {
+    const a = parseDayAnswer("Fri", "2026-10-15", "2026-10-21");
+    expect(a).toEqual({ kind: "date", date: "2026-10-23" });
+  });
+
+  it("reads relative days", () => {
+    expect(date("today")).toBe("2026-10-19");
+    expect(date("Tomorrow")).toBe("2026-10-20");
+    expect(date("end of week")).toBe("2026-10-25");
+    expect(date("end of month")).toBe("2026-10-31");
+  });
+
+  it("reads dates in several formats", () => {
+    expect(date("Oct 28")).toBe("2026-10-28");
+    expect(date("October 28th")).toBe("2026-10-28");
+    expect(date("28 oct")).toBe("2026-10-28");
+    expect(date("10/28")).toBe("2026-10-28");
+    expect(date("11/5/2026")).toBe("2026-11-05");
+    expect(date("Nov 12")).toBe("2026-11-12");
+    expect(date("the 30th")).toBe("2026-10-30");
+  });
+
+  it("rolls past dates into the future", () => {
+    expect(date("the 5th")).toBe("2026-11-05");
+    expect(date("Jan 3")).toBe("2027-01-03");
+    expect(date("10/1")).toBe("2027-10-01");
+  });
+
+  it("recognizes skip and same, and rejects nonsense", () => {
+    expect(date("skip")).toBe("skip");
+    expect(date("none")).toBe("skip");
+    expect(date("same")).toBe("same");
+    expect(date("soonish")).toBe("invalid");
+    expect(date("Feb 30")).toBe("invalid");
   });
 });

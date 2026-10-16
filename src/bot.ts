@@ -5,7 +5,19 @@ import type { Env, Horizon, Task } from "./env";
 import { HELP_TEXT, escapeHtml, formatAllLists, formatDailyMessage, formatList, horizonLabel } from "./format";
 import { interpretWithRules } from "./fallback";
 import { sendMessage, type TelegramUpdate } from "./telegram";
-import { friendlyDate, periodLabels } from "./time";
+import { friendlyDate, periodLabels, shortDate } from "./time";
+
+/** Only accept real YYYY-MM-DD dates from Claude. */
+function validDate(value: string | null | undefined): string | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  return Number.isNaN(Date.parse(`${value}T00:00:00Z`)) ? null : value;
+}
+
+function datesText(preferred: string | null, due: string | null): string {
+  return [preferred ? `do ${shortDate(preferred)}` : null, due ? `by ${shortDate(due)}` : null]
+    .filter(Boolean)
+    .join(", ");
+}
 
 export const OWNER_KEY = "owner_chat_id";
 
@@ -77,7 +89,14 @@ export async function respond(env: Env, text: string): Promise<string> {
   const tasks = await listActiveTasks(env.DB);
   let interpretation: Interpretation;
   try {
-    interpretation = await interpretMessage(env, text, tasks);
+    const now = new Date();
+    interpretation = await interpretMessage(
+      env,
+      text,
+      tasks,
+      friendlyDate(now, env.TIMEZONE),
+      periodLabels(now, env.TIMEZONE),
+    );
   } catch (err) {
     console.error("interpretMessage failed, using rules", err);
     interpretation = interpretWithRules(text, tasks);
@@ -103,9 +122,15 @@ export async function applyInterpretation(env: Env, interpretation: Interpretati
 async function applyAction(env: Env, action: Action, byId: Map<number, Task>): Promise<string | null> {
   if (action.type === "add") {
     if (!action.title?.trim()) return null;
-    const task = await addTask(env.DB, action.title, action.horizon ?? "week", clampRank(action.rank));
+    const preferred = validDate(action.preferred_date);
+    const due = validDate(action.due_date);
+    const task = await addTask(env.DB, action.title, action.horizon ?? "week", clampRank(action.rank), {
+      preferred_date: preferred,
+      due_date: due,
+    });
     byId.set(task.id, task);
-    return `➕ Added <b>${escapeHtml(task.title)}</b> to ${horizonLabel(task.horizon)} (rank ${task.rank}).`;
+    const dates = datesText(preferred, due);
+    return `➕ Added <b>${escapeHtml(task.title)}</b> to ${horizonLabel(task.horizon)} (rank ${task.rank}${dates ? `, ${dates}` : ""}).`;
   }
 
   if (action.type === "show") {
@@ -131,15 +156,27 @@ async function applyAction(env: Env, action: Action, byId: Map<number, Task>): P
       byId.delete(task.id);
       return `🗑 Removed: ${title}`;
     case "update": {
-      const fields: { title?: string; horizon?: Horizon; rank?: number } = {};
+      const fields: {
+        title?: string;
+        horizon?: Horizon;
+        rank?: number;
+        preferred_date?: string;
+        due_date?: string;
+      } = {};
       if (action.title?.trim()) fields.title = action.title;
       if (action.horizon) fields.horizon = action.horizon;
       if (action.rank != null) fields.rank = clampRank(action.rank);
+      const preferred = validDate(action.preferred_date);
+      const due = validDate(action.due_date);
+      if (preferred) fields.preferred_date = preferred;
+      if (due) fields.due_date = due;
       await updateTask(env.DB, task.id, fields);
       const changes = [
         fields.title ? `renamed to <b>${escapeHtml(fields.title.trim())}</b>` : null,
         fields.horizon ? `moved to ${horizonLabel(fields.horizon)}` : null,
         fields.rank != null ? `rank ${fields.rank}` : null,
+        preferred ? `do ${shortDate(preferred)}` : null,
+        due ? `by ${shortDate(due)}` : null,
       ].filter(Boolean);
       return `✏️ Updated ${title}${changes.length ? `: ${changes.join(", ")}` : ""}.`;
     }

@@ -27,13 +27,26 @@ const SCHEMA = [
   )`,
 ];
 
+/** Columns added after the first release. Added in place, so existing tasks are kept. */
+const ADDED_TASK_COLUMNS: Record<string, string> = {
+  preferred_date: "TEXT",
+  due_date: "TEXT",
+};
+
 let schemaReady = false;
 
 export async function ensureSchema(db: D1Database): Promise<void> {
   if (schemaReady) return;
   await db.batch(SCHEMA.map((sql) => db.prepare(sql)));
+  const { results } = await db.prepare(`SELECT name FROM pragma_table_info('tasks')`).all<{ name: string }>();
+  const existing = new Set(results.map((r) => r.name));
+  for (const [column, type] of Object.entries(ADDED_TASK_COLUMNS)) {
+    if (!existing.has(column)) await db.prepare(`ALTER TABLE tasks ADD COLUMN ${column} ${type}`).run();
+  }
   schemaReady = true;
 }
+
+const TASK_COLUMNS = "id, title, horizon, rank, status, preferred_date, due_date";
 
 export function clampRank(rank: number | null | undefined, fallback = 3): number {
   if (rank == null || !Number.isFinite(rank)) return fallback;
@@ -46,7 +59,7 @@ export function clampRank(rank: number | null | undefined, fallback = 3): number
 export async function listActiveTasks(db: D1Database): Promise<Task[]> {
   const { results } = await db
     .prepare(
-      `SELECT id, title, horizon, rank, status FROM tasks
+      `SELECT ${TASK_COLUMNS} FROM tasks
        WHERE status != 'done'
        ORDER BY rank ASC, id ASC`,
     )
@@ -55,13 +68,22 @@ export async function listActiveTasks(db: D1Database): Promise<Task[]> {
 }
 
 export async function getTask(db: D1Database, id: number): Promise<Task | null> {
-  return db.prepare(`SELECT id, title, horizon, rank, status FROM tasks WHERE id = ?`).bind(id).first<Task>();
+  return db.prepare(`SELECT ${TASK_COLUMNS} FROM tasks WHERE id = ?`).bind(id).first<Task>();
 }
 
-export async function addTask(db: D1Database, title: string, horizon: Horizon, rank: number): Promise<Task> {
+export async function addTask(
+  db: D1Database,
+  title: string,
+  horizon: Horizon,
+  rank: number,
+  dates: { preferred_date?: string | null; due_date?: string | null } = {},
+): Promise<Task> {
   const row = await db
-    .prepare(`INSERT INTO tasks (title, horizon, rank) VALUES (?, ?, ?) RETURNING id, title, horizon, rank, status`)
-    .bind(title.trim(), horizon, clampRank(rank))
+    .prepare(
+      `INSERT INTO tasks (title, horizon, rank, preferred_date, due_date) VALUES (?, ?, ?, ?, ?)
+       RETURNING ${TASK_COLUMNS}`,
+    )
+    .bind(title.trim(), horizon, clampRank(rank), dates.preferred_date ?? null, dates.due_date ?? null)
     .first<Task>();
   if (!row) throw new Error("Insert returned no row");
   return row;
@@ -70,7 +92,14 @@ export async function addTask(db: D1Database, title: string, horizon: Horizon, r
 export async function updateTask(
   db: D1Database,
   id: number,
-  fields: { title?: string; horizon?: Horizon; rank?: number; status?: Status },
+  fields: {
+    title?: string;
+    horizon?: Horizon;
+    rank?: number;
+    status?: Status;
+    preferred_date?: string | null;
+    due_date?: string | null;
+  },
 ): Promise<void> {
   const sets: string[] = [];
   const values: unknown[] = [];
@@ -85,6 +114,14 @@ export async function updateTask(
   if (fields.rank != null) {
     sets.push("rank = ?");
     values.push(clampRank(fields.rank));
+  }
+  if (fields.preferred_date !== undefined) {
+    sets.push("preferred_date = ?");
+    values.push(fields.preferred_date);
+  }
+  if (fields.due_date !== undefined) {
+    sets.push("due_date = ?");
+    values.push(fields.due_date);
   }
   if (fields.status) {
     sets.push("status = ?");

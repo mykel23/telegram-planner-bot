@@ -80,6 +80,8 @@ export interface PeriodLabels {
   week: string;
   /** "October 2026" */
   month: string;
+  /** The same periods as YYYY-MM-DD dates, for comparisons. */
+  iso: { day: string; weekStart: string; weekEnd: string; monthEnd: string };
 }
 
 /**
@@ -102,9 +104,99 @@ export function periodLabels(now: Date, timeZone: string, planAhead = false): Pe
   const fmt = (t: number, options: Intl.DateTimeFormatOptions) =>
     new Intl.DateTimeFormat("en-US", { timeZone: "UTC", ...options }).format(new Date(t));
   const short: Intl.DateTimeFormatOptions = { weekday: "short", month: "short", day: "numeric" };
+  const dayDate = new Date(day);
+  const monthEnd = Date.UTC(dayDate.getUTCFullYear(), dayDate.getUTCMonth() + 1, 0);
   return {
     day: fmt(day, short),
     week: `${fmt(monday, short)} – ${fmt(sunday, short)}`,
     month: fmt(day, { month: "long", year: "numeric" }),
+    iso: { day: isoDate(day), weekStart: isoDate(monday), weekEnd: isoDate(sunday), monthEnd: isoDate(monthEnd) },
   };
+}
+
+function isoDate(t: number): string {
+  return new Date(t).toISOString().slice(0, 10);
+}
+
+function parseIso(iso: string): number {
+  const [y, m, d] = iso.split("-").map(Number);
+  return Date.UTC(y, m - 1, d);
+}
+
+export function addDays(iso: string, days: number): string {
+  return isoDate(parseIso(iso) + days * DAY_MS);
+}
+
+/** "Wed 10/21" */
+export function shortDate(iso: string): string {
+  const t = new Date(parseIso(iso));
+  return `${WEEKDAYS[t.getUTCDay()].slice(0, 3)} ${t.getUTCMonth() + 1}/${t.getUTCDate()}`;
+}
+
+const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+
+export type DayAnswer = { kind: "date"; date: string } | { kind: "skip" } | { kind: "same" } | { kind: "invalid" };
+
+/**
+ * Reads a day from a check-in reply, relative to the planning day `fromIso`:
+ * "Fri", "next friday", "today", "tomorrow", "Oct 28", "10/28", "28th",
+ * "end of week", "end of month", "skip", or "same" (same as the preferred day).
+ * Weekdays mean the next one on or after `weekdayFromIso` (the planning day
+ * unless given, e.g. the preferred day when asking for the latest day); a date
+ * without a year that has already passed this year means next year.
+ */
+export function parseDayAnswer(text: string, fromIso: string, weekdayFromIso: string = fromIso): DayAnswer {
+  const t = text.trim().toLowerCase().replace(/[.!,]+$/, "").replace(/\s+/g, " ");
+  if (/^(skip|none|no|n\/a|-|no date|no deadline|whenever|any ?day)$/.test(t)) return { kind: "skip" };
+  if (/^(same|same day|same as preferred)$/.test(t)) return { kind: "same" };
+  if (t === "today") return { kind: "date", date: fromIso };
+  if (t === "tomorrow") return { kind: "date", date: addDays(fromIso, 1) };
+
+  const from = new Date(parseIso(fromIso));
+  if (/^(end of (the )?week|eow|this weekend|weekend)$/.test(t)) {
+    const toSunday = (7 - from.getUTCDay()) % 7;
+    return { kind: "date", date: addDays(fromIso, toSunday) };
+  }
+  if (/^(end of (the )?month|eom)$/.test(t)) {
+    return { kind: "date", date: isoDate(Date.UTC(from.getUTCFullYear(), from.getUTCMonth() + 1, 0)) };
+  }
+
+  const weekday = t.match(/^(next |this )?(sun|mon|tue|wed|thu|fri|sat)[a-z]*$/);
+  if (weekday) {
+    const target = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"].indexOf(weekday[2]);
+    const start = new Date(parseIso(weekdayFromIso));
+    let ahead = (target - start.getUTCDay() + 7) % 7;
+    if (weekday[1] === "next ") ahead += 7;
+    return { kind: "date", date: addDays(weekdayFromIso, ahead) };
+  }
+
+  let month: number | null = null;
+  let day: number | null = null;
+  let year: number | null = null;
+  let m: RegExpMatchArray | null;
+  if ((m = t.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/))) {
+    month = Number(m[1]) - 1;
+    day = Number(m[2]);
+    if (m[3]) year = m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3]);
+  } else if ((m = t.match(/^(?:the )?(\d{1,2})(?:st|nd|rd|th)$/))) {
+    month = from.getUTCMonth();
+    day = Number(m[1]);
+    const candidate = Date.UTC(from.getUTCFullYear(), month, day);
+    if (candidate < from.getTime()) month++;
+  } else if ((m = t.match(/^(?:[a-z]+ )?([a-z]{3})[a-z]* (\d{1,2})(?:st|nd|rd|th)?(?: (\d{4}))?$/))) {
+    month = MONTHS.indexOf(m[1]);
+    day = Number(m[2]);
+    if (m[3]) year = Number(m[3]);
+  } else if ((m = t.match(/^(\d{1,2})(?:st|nd|rd|th)? ([a-z]{3})[a-z]*(?: (\d{4}))?$/))) {
+    month = MONTHS.indexOf(m[2]);
+    day = Number(m[1]);
+    if (m[3]) year = Number(m[3]);
+  }
+  if (month == null || month < 0 || day == null || day < 1 || day > 31) return { kind: "invalid" };
+
+  let y = year ?? from.getUTCFullYear();
+  let candidate = Date.UTC(y, month, day);
+  if (new Date(candidate).getUTCDate() !== day && month < 12) return { kind: "invalid" };
+  if (year == null && candidate < from.getTime()) candidate = Date.UTC(++y, month, day);
+  return { kind: "date", date: isoDate(candidate) };
 }

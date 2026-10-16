@@ -15,7 +15,7 @@ To-do apps wait for you to open them. I wanted a planner that comes to me: a sho
 | When | What happens |
 |---|---|
 | **Every morning (7:00 AM)** | The bot sends today's ranked to-do list, what I'm currently working on, and what's up next this week. |
-| **Weekly check-in (Sunday 6:00 PM)** | Plans the Monday-to-Sunday week ahead. The bot asks what I need to get done, asks me to rank each new task from 1 to 5, then sends my month, week and day lists. |
+| **Weekly check-in (Sunday 6:00 PM)** | Plans the Monday-to-Sunday week ahead. The bot asks what I need to get done this week or month. For each task it asks for a rank from 1 to 5, the day I'd like to do it, and the latest day it can be done. Then it sends my month, week and day lists, with dates. |
 | **Anytime** | I text it in plain English: "add renew passport this month", "done with the bank", "working on the deck", "what's on today?" |
 
 ## Demo
@@ -65,6 +65,7 @@ flowchart LR
 | `done with the bank` | Marks a task done |
 | `working on the deck` | Marks a task as in progress |
 | `move the deck to this month` / `make the deck rank 2` | Changes a task's list or rank |
+| `the deck is due Friday` / `I'd like to do the deck Wednesday` | Sets a task's latest day or preferred day |
 | `what's on today?` | Shows today's list |
 | `/today` `/week` `/month` `/lists` | Shows lists |
 | `/checkin` | Starts the weekly check-in now |

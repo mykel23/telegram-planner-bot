@@ -1,15 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { Task } from "../src/env";
-import { formatAllLists, formatDailyMessage } from "../src/format";
-import type { PeriodLabels } from "../src/time";
+import { effectiveHorizon, formatAllLists, formatDailyMessage } from "../src/format";
+import { periodLabels } from "../src/time";
 
-const labels: PeriodLabels = { day: "Fri, Oct 16", week: "Mon, Oct 12 – Sun, Oct 18", month: "October 2026" };
+// Friday Oct 16, 7 AM Central
+const labels = periodLabels(new Date("2026-10-16T12:00:00Z"), "America/Chicago");
+const none = { preferred_date: null, due_date: null };
 
 const tasks: Task[] = [
-  { id: 1, title: "Finish <deck>", horizon: "day", rank: 1, status: "doing" },
-  { id: 2, title: "Call bank", horizon: "day", rank: 2, status: "open" },
-  { id: 3, title: "Plan Q1", horizon: "week", rank: 3, status: "open" },
-  { id: 4, title: "Clean garage", horizon: "month", rank: 5, status: "open" },
+  { id: 1, title: "Finish <deck>", horizon: "day", rank: 1, status: "doing", ...none },
+  { id: 2, title: "Call bank", horizon: "day", rank: 2, status: "open", ...none },
+  { id: 3, title: "Plan Q1", horizon: "week", rank: 3, status: "open", ...none },
+  { id: 4, title: "Clean garage", horizon: "month", rank: 5, status: "open", ...none },
 ];
 
 describe("formatDailyMessage", () => {
@@ -38,5 +40,37 @@ describe("formatAllLists", () => {
     const order = ["Month:", "Week:", "Day:"].map((h) => msg.indexOf(h));
     expect(order).toEqual([...order].sort((a, b) => a - b));
     expect(msg).toContain("Clean garage");
+  });
+});
+
+describe("dates", () => {
+  const base: Task = { id: 9, title: "Report", horizon: "month", rank: 3, status: "open", preferred_date: null, due_date: null };
+
+  it("moves a task to Day when it is preferred or due today, or overdue", () => {
+    expect(effectiveHorizon({ ...base, preferred_date: "2026-10-16" }, labels)).toBe("day");
+    expect(effectiveHorizon({ ...base, due_date: "2026-10-14" }, labels)).toBe("day");
+  });
+
+  it("moves a task to Week when its date is later this week", () => {
+    expect(effectiveHorizon({ ...base, due_date: "2026-10-18" }, labels)).toBe("week");
+  });
+
+  it("keeps a task in its list when its dates are after this week", () => {
+    expect(effectiveHorizon({ ...base, due_date: "2026-10-30" }, labels)).toBe("month");
+  });
+
+  it("shows the dates and flags overdue tasks", () => {
+    const msg = formatDailyMessage(
+      [{ ...base, preferred_date: "2026-10-14", due_date: "2026-10-15" }],
+      "Friday, Oct 16",
+      labels,
+    );
+    expect(msg).toContain("Report ⚠️ overdue");
+    expect(msg).toContain("do Wed 10/14 · by Thu 10/15");
+  });
+
+  it("flags tasks due today", () => {
+    const msg = formatDailyMessage([{ ...base, due_date: "2026-10-16" }], "Friday, Oct 16", labels);
+    expect(msg).toContain("❗ due today");
   });
 });

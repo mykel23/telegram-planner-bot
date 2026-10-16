@@ -1,5 +1,6 @@
 import type { Action, Interpretation } from "./claude";
 import type { Horizon, Task } from "./env";
+import type { PeriodLabels } from "./time";
 
 /**
  * Rule-based backups for when the Claude API is unreachable.
@@ -51,7 +52,7 @@ function horizonFromText(text: string): Horizon | null {
 }
 
 function action(partial: Partial<Action> & Pick<Action, "type">): Action {
-  return { task_id: null, title: null, horizon: null, rank: null, ...partial };
+  return { task_id: null, title: null, horizon: null, rank: null, preferred_date: null, due_date: null, ...partial };
 }
 
 export function interpretWithRules(text: string, tasks: Task[]): Interpretation {
@@ -94,14 +95,23 @@ export function interpretWithRules(text: string, tasks: Task[]): Interpretation 
 }
 
 /**
- * Rule-based list building, used if Claude can't plan the week:
- * tasks in progress and the top-ranked (rank 1-2, up to 5) go to today,
- * rank 3 goes to this week, rank 4-5 goes to this month.
+ * Rule-based list building, used if Claude can't plan the week.
+ * Dates come first: preferred or due on the planning day goes to today,
+ * within the planning week goes to this week, later goes to this month.
+ * Without dates: tasks in progress and the top-ranked (rank 1-2, up to 5)
+ * go to today, rank 3 to this week, rank 4-5 to this month.
  */
-export function planWithRules(tasks: Task[]): Map<number, Horizon> {
+export function planWithRules(tasks: Task[], labels: PeriodLabels): Map<number, Horizon> {
   const result = new Map<number, Horizon>();
   let dayCount = 0;
   for (const task of [...tasks].sort((a, b) => a.rank - b.rank || a.id - b.id)) {
+    const date = [task.preferred_date, task.due_date].filter((d): d is string => !!d).sort()[0];
+    if (date) {
+      const horizon: Horizon = date <= labels.iso.day ? "day" : date <= labels.iso.weekEnd ? "week" : "month";
+      result.set(task.id, horizon);
+      if (horizon === "day") dayCount++;
+      continue;
+    }
     if ((task.status === "doing" || task.rank <= 2) && dayCount < 5) {
       result.set(task.id, "day");
       dayCount++;

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { Task } from "../src/env";
 import { findTask, interpretWithRules, planWithRules } from "../src/fallback";
+import { periodLabels } from "../src/time";
+
+// Planning on Sunday Oct 18, 6 PM Central: day = Mon Oct 19, week = Oct 19-25.
+const labels = periodLabels(new Date("2026-10-18T23:00:00Z"), "America/Chicago", true);
 
 const task = (id: number, title: string, rank = 3, extra: Partial<Task> = {}): Task => ({
   id,
@@ -8,6 +12,8 @@ const task = (id: number, title: string, rank = 3, extra: Partial<Task> = {}): T
   rank,
   horizon: "week",
   status: "open",
+  preferred_date: null,
+  due_date: null,
   ...extra,
 });
 
@@ -31,7 +37,9 @@ describe("findTask", () => {
 describe("interpretWithRules", () => {
   it("parses add with a list and rank", () => {
     const result = interpretWithRules("add Email Sarah today, rank 1", tasks);
-    expect(result.actions).toEqual([{ type: "add", title: "Email Sarah", horizon: "day", rank: 1, task_id: null }]);
+    expect(result.actions).toEqual([
+      { type: "add", title: "Email Sarah", horizon: "day", rank: 1, task_id: null, preferred_date: null, due_date: null },
+    ]);
   });
 
   it("parses a plain add", () => {
@@ -41,7 +49,7 @@ describe("interpretWithRules", () => {
 
   it("parses done with", () => {
     const result = interpretWithRules("done with the bank", tasks);
-    expect(result.actions).toEqual([{ type: "done", task_id: 2, title: null, horizon: null, rank: null }]);
+    expect(result.actions[0]).toMatchObject({ type: "done", task_id: 2 });
   });
 
   it("explains when a done task can't be found", () => {
@@ -58,18 +66,28 @@ describe("interpretWithRules", () => {
 
 describe("planWithRules", () => {
   it("puts top-ranked and in-progress tasks on today, then week, then month", () => {
-    const plan = planWithRules([
-      task(1, "a", 1),
-      task(2, "b", 3),
-      task(3, "c", 5),
-      task(4, "d", 4, { status: "doing" }),
-    ]);
+    const plan = planWithRules(
+      [task(1, "a", 1), task(2, "b", 3), task(3, "c", 5), task(4, "d", 4, { status: "doing" })],
+      labels,
+    );
     expect(Object.fromEntries(plan)).toEqual({ 1: "day", 2: "week", 3: "month", 4: "day" });
   });
 
   it("caps today at five tasks", () => {
     const many = Array.from({ length: 7 }, (_, i) => task(i + 1, `t${i}`, 1));
-    const days = [...planWithRules(many).values()].filter((h) => h === "day");
+    const days = [...planWithRules(many, labels).values()].filter((h) => h === "day");
     expect(days).toHaveLength(5);
+  });
+
+  it("uses dates before rank", () => {
+    const plan = planWithRules(
+      [
+        task(1, "Monday task", 5, { preferred_date: "2026-10-19" }),
+        task(2, "Due Friday", 5, { due_date: "2026-10-23" }),
+        task(3, "Due next month", 1, { due_date: "2026-11-15" }),
+      ],
+      labels,
+    );
+    expect(Object.fromEntries(plan)).toEqual({ 1: "day", 2: "week", 3: "month" });
   });
 });

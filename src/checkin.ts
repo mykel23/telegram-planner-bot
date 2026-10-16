@@ -3,23 +3,36 @@ import { addTask, clearState, getState, listActiveTasks, setState, updateTask } 
 import type { Env, Horizon } from "./env";
 import { escapeHtml, formatAllLists } from "./format";
 import { planWithRules } from "./fallback";
-import { friendlyDate, periodLabels } from "./time";
+import { friendlyDate, parseDayAnswer, periodLabels, shortDate } from "./time";
 
 /**
  * The weekly check-in is a small conversation:
- *   collect: the user sends tasks (one per line or one per message), then "done".
- *   rank:    the bot asks for a 1-5 rank for each new task, one at a time.
- *   finish:  tasks are saved, Claude sorts everything into month/week/day lists,
- *            and the bot sends the three lists.
+ *   collect:  the user sends tasks (one per line or one per message), then "done".
+ *   details:  for each new task, the bot asks three questions in turn:
+ *             rank (1-5), preferred day, and latest day it can be done.
+ *   finish:   tasks are saved, Claude sorts everything into month/week/day lists,
+ *             and the bot sends the three lists.
  * Progress is stored in D1, so a restart mid check-in loses nothing.
  */
 
 const STATE_KEY = "checkin";
 
+export type DetailStep = "rank" | "preferred" | "due";
+
+export interface CheckinItem {
+  title: string;
+  rank: number | null;
+  preferred_date?: string | null;
+  due_date?: string | null;
+}
+
 export interface CheckinState {
   stage: "collect" | "rank";
-  items: { title: string; rank: number | null }[];
+  items: CheckinItem[];
+  /** Which task the bot is asking about. */
   index: number;
+  /** Which question for that task. Missing in check-ins started before dates existed. */
+  step?: DetailStep;
 }
 
 const FINISHED_WORDS = new Set([
@@ -66,27 +79,40 @@ export async function cancelCheckin(env: Env): Promise<void> {
   await clearState(env.DB, STATE_KEY);
 }
 
-function rankQuestion(state: CheckinState): string {
+const DAY_EXAMPLES = `a day ("Wed", "tomorrow") or a date ("Oct 28", "end of month")`;
+
+/** The next question to ask about the current task. */
+export function detailQuestion(state: CheckinState): string {
   const item = state.items[state.index];
-  return (
-    `(${state.index + 1}/${state.items.length}) How important is <b>${escapeHtml(item.title)}</b>?\n` +
-    `Reply 1 to 5 (1 = most important).`
-  );
+  const title = `<b>${escapeHtml(item.title)}</b>`;
+  const counter = `(${state.index + 1}/${state.items.length})`;
+  switch (state.step ?? "rank") {
+    case "rank":
+      return `${counter} How important is ${title}?\nReply 1 to 5 (1 = most important).`;
+    case "preferred":
+      return `${counter} What day would you <b>like</b> to do ${title}?\nReply with ${DAY_EXAMPLES}, or "skip".`;
+    case "due":
+      return (
+        `${counter} What's the <b>latest</b> day ${title} can be done?\n` +
+        `Reply with ${DAY_EXAMPLES}${item.preferred_date ? `, "same"` : ""}, or "skip".`
+      );
+  }
 }
 
 /** Starts a check-in and returns the opening message. */
 export async function startCheckin(env: Env): Promise<string> {
-  await saveCheckin(env, { stage: "collect", items: [], index: 0 });
+  await saveCheckin(env, { stage: "collect", items: [], index: 0, step: "rank" });
+  const labels = periodLabels(new Date(), env.TIMEZONE, true);
   const tasks = await listActiveTasks(env.DB);
   const existing = tasks.length
     ? `\n\nAlready on your lists (${tasks.length}):\n${tasks.map((t) => `• ${escapeHtml(t.title)}`).join("\n")}`
     : "";
   return (
     `🗓 <b>Weekly check-in</b>\n` +
-    `Planning the week of <b>${escapeHtml(periodLabels(new Date(), env.TIMEZONE, true).week)}</b> ` +
-    `(${escapeHtml(periodLabels(new Date(), env.TIMEZONE, true).month)}).\n\n` +
-    `What do you need to get done? Send your tasks one per line, or one per message.\n` +
-    `Send <b>done</b> when you've listed everything.` +
+    `Planning the week of <b>${escapeHtml(labels.week)}</b> (${escapeHtml(labels.month)}).\n\n` +
+    `What do you need to get done this week or this month? Send your tasks one per line, or one per message.\n` +
+    `Send <b>done</b> when you've listed everything. For each task I'll ask for a rank, the day you'd like to do it, ` +
+    `and the latest day it can be done.` +
     existing
   );
 }
@@ -98,8 +124,10 @@ export async function handleCheckinReply(env: Env, state: CheckinState, text: st
       if (state.items.length === 0) return finishCheckin(env, state);
       state.stage = "rank";
       state.index = 0;
+      state.step = "rank";
       await saveCheckin(env, state);
-      return `Great, ${state.items.length} new task${state.items.length === 1 ? "" : "s"}. Let's rank them.\n\n${rankQuestion(state)}`;
+      const n = state.items.length;
+      return `Great, ${n} new task${n === 1 ? "" : "s"}. Let's go through them.\n\n${detailQuestion(state)}`;
     }
     const items = splitItems(text);
     state.items.push(...items.map((title) => ({ title, rank: null })));
@@ -107,25 +135,62 @@ export async function handleCheckinReply(env: Env, state: CheckinState, text: st
     return `Got it, ${state.items.length} so far. Anything else? Send <b>done</b> when you're finished.`;
   }
 
-  const rank = parseRank(text);
-  if (rank == null) return `Please reply with a number from 1 to 5.\n\n${rankQuestion(state)}`;
-  state.items[state.index].rank = rank;
-  state.index++;
+  const item = state.items[state.index];
+  const step = state.step ?? "rank";
+  const fromIso = periodLabels(new Date(), env.TIMEZONE, true).iso.day;
+
+  if (step === "rank") {
+    const rank = parseRank(text);
+    if (rank == null) return `Please reply with a number from 1 to 5.\n\n${detailQuestion(state)}`;
+    item.rank = rank;
+    state.step = "preferred";
+  } else if (step === "preferred") {
+    const answer = parseDayAnswer(text, fromIso);
+    if (answer.kind === "invalid" || answer.kind === "same") {
+      return `Sorry, I didn't get that day.\n\n${detailQuestion(state)}`;
+    }
+    item.preferred_date = answer.kind === "date" ? answer.date : null;
+    state.step = "due";
+  } else {
+    // "Fri" after a preferred Wednesday means the Friday after that Wednesday.
+    const answer = parseDayAnswer(text, fromIso, item.preferred_date ?? fromIso);
+    if (answer.kind === "invalid" || (answer.kind === "same" && !item.preferred_date)) {
+      return `Sorry, I didn't get that day.\n\n${detailQuestion(state)}`;
+    }
+    const due = answer.kind === "date" ? answer.date : answer.kind === "same" ? item.preferred_date! : null;
+    if (due && item.preferred_date && due < item.preferred_date) {
+      return (
+        `The latest day can't be before the day you'd like to do it (${shortDate(item.preferred_date)}).\n\n` +
+        detailQuestion(state)
+      );
+    }
+    item.due_date = due;
+    state.index++;
+    state.step = "rank";
+  }
+
   if (state.index < state.items.length) {
     await saveCheckin(env, state);
-    return rankQuestion(state);
+    return detailQuestion(state);
   }
   return finishCheckin(env, state);
 }
 
 async function finishCheckin(env: Env, state: CheckinState): Promise<string> {
+  const now = new Date();
+  const labels = periodLabels(now, env.TIMEZONE, true);
+
   for (const item of state.items) {
-    await addTask(env.DB, item.title, "week", item.rank ?? 3);
+    // Starting list from the dates; Claude (or the rules) refine it below.
+    const date = item.preferred_date ?? item.due_date;
+    const horizon: Horizon = date && date > labels.iso.weekEnd ? "month" : "week";
+    await addTask(env.DB, item.title, horizon, item.rank ?? 3, {
+      preferred_date: item.preferred_date ?? null,
+      due_date: item.due_date ?? null,
+    });
   }
 
   const tasks = await listActiveTasks(env.DB);
-  const now = new Date();
-  const labels = periodLabels(now, env.TIMEZONE, true);
   let assignments: Map<number, Horizon>;
   let note = "";
   try {
@@ -134,7 +199,7 @@ async function finishCheckin(env: Env, state: CheckinState): Promise<string> {
     note = plan.note;
   } catch (err) {
     console.error("planHorizons failed, using rules", err);
-    assignments = planWithRules(tasks);
+    assignments = planWithRules(tasks, labels);
   }
 
   for (const task of tasks) {

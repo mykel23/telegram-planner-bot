@@ -29,6 +29,10 @@ export interface Task {
   /** 1 = most important, 5 = least important. */
   rank: number;
   status: Status;
+  /** Day the owner would like to do it, YYYY-MM-DD, or null. */
+  preferred_date: string | null;
+  /** Latest day it can be done, YYYY-MM-DD, or null. */
+  due_date: string | null;
 }
 
 export const HORIZONS: Horizon[] = ["month", "week", "day"];

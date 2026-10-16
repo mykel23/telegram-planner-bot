@@ -19,7 +19,17 @@ function client(env: Env): Anthropic {
 function taskSnapshot(tasks: Task[]): string {
   if (tasks.length === 0) return "(no active tasks)";
   return tasks
-    .map((t) => JSON.stringify({ id: t.id, title: t.title, list: t.horizon, rank: t.rank, status: t.status }))
+    .map((t) =>
+      JSON.stringify({
+        id: t.id,
+        title: t.title,
+        list: t.horizon,
+        rank: t.rank,
+        status: t.status,
+        preferred_date: t.preferred_date,
+        due_date: t.due_date,
+      }),
+    )
     .join("\n");
 }
 
@@ -34,6 +44,14 @@ export const ActionSchema = z.object({
     .nullable()
     .describe("Which list. For show, null means all lists. For add, null means the default (week)."),
   rank: z.number().int().nullable().describe("1 (most important) to 5 (least). Null to keep the default."),
+  preferred_date: z
+    .string()
+    .nullable()
+    .describe("YYYY-MM-DD day the user would like to do it, for add or update. Null to leave unchanged."),
+  due_date: z
+    .string()
+    .nullable()
+    .describe("YYYY-MM-DD latest day it can be done, for add or update. Null to leave unchanged."),
 });
 
 export const InterpretationSchema = z.object({
@@ -52,7 +70,8 @@ Turn the user's message into a list of actions:
 - add: a new task. Put the task wording in title, cleaned up but in the user's words. Use horizon "day" if they say today/tonight, "month" if they say this month/later/someday, otherwise null. Use rank only if they give one or clearly signal urgency (urgent/asap means 1).
 - done: they finished an existing task ("done with X", "finished X", "X is done").
 - start: they are now working on an existing task ("working on X", "starting X").
-- update: change an existing task's list, rank or title ("move X to this month", "make X rank 1", "rename X to Y").
+- update: change an existing task's list, rank, title or dates ("move X to this month", "make X rank 1", "rename X to Y", "X is due Friday", "I'd like to do X Wednesday").
+- Dates: "due", "by", "deadline" or "latest" mean due_date; "do it on", "I'd like to", "planning to" mean preferred_date. Convert day names to the next such date on or after today, using the calendar you are given. Weeks run Monday to Sunday.
 - remove: delete an existing task without completing it ("drop X", "remove X", "never mind X").
 - show: they want to see a list ("what's on today?" means horizon day; "this week" means week; "everything" or "my lists" means null).
 
@@ -62,7 +81,13 @@ Rules:
 - If the message is a question or chat that no action covers, return no actions and answer briefly in reply.
 - Keep reply short and plain. Leave it empty when actions cover the message.`;
 
-export async function interpretMessage(env: Env, text: string, tasks: Task[]): Promise<Interpretation> {
+export async function interpretMessage(
+  env: Env,
+  text: string,
+  tasks: Task[],
+  todayLabel: string,
+  labels: PeriodLabels,
+): Promise<Interpretation> {
   const response = await client(env).messages.parse({
     model: env.CLAUDE_MODEL,
     max_tokens: 4000,
@@ -71,7 +96,9 @@ export async function interpretMessage(env: Env, text: string, tasks: Task[]): P
     messages: [
       {
         role: "user",
-        content: `Active tasks (JSON lines):\n${taskSnapshot(tasks)}\n\nUser message:\n${text}`,
+        content:
+          `Today is ${todayLabel} (${labels.iso.day}). This week is ${labels.week} (${labels.iso.weekStart} to ${labels.iso.weekEnd}).\n\n` +
+          `Active tasks (JSON lines):\n${taskSnapshot(tasks)}\n\nUser message:\n${text}`,
       },
     ],
   });
@@ -102,7 +129,7 @@ const PLAN_SYSTEM = `You are a planning assistant. After the user's weekly check
 
 Weeks run Monday 12:00 AM to Sunday 11:59 PM. The check-in usually happens on Sunday evening: in that case "week" means the week starting tomorrow (Monday), and "day" means Monday.
 
-Use rank as the main signal (1 is most important). Respect a list the user set on purpose unless rank strongly disagrees. Return an assignment for every task ID you are given and no others.`;
+Dates matter most: a task whose preferred_date or due_date is on or before the planning day belongs in day; one whose dates fall in the planning week belongs in week; one whose dates fall later belongs in month. Without dates, use rank as the main signal (1 is most important). Respect a list the user set on purpose unless rank strongly disagrees. Return an assignment for every task ID you are given and no others.`;
 
 export async function planHorizons(env: Env, tasks: Task[], todayLabel: string, labels: PeriodLabels): Promise<Plan> {
   const response = await client(env).messages.parse({
@@ -113,7 +140,7 @@ export async function planHorizons(env: Env, tasks: Task[], todayLabel: string, 
     messages: [
       {
         role: "user",
-        content: `Today is ${todayLabel}. Planning: day = ${labels.day}, week = ${labels.week}, month = ${labels.month}.\n\nActive tasks (JSON lines):\n${taskSnapshot(tasks)}`,
+        content: `Today is ${todayLabel}. Planning: day = ${labels.day} (${labels.iso.day}), week = ${labels.week} (${labels.iso.weekStart} to ${labels.iso.weekEnd}), month = ${labels.month}.\n\nActive tasks (JSON lines):\n${taskSnapshot(tasks)}`,
       },
     ],
   });
