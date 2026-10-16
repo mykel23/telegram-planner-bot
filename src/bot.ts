@@ -57,7 +57,13 @@ import {
   addedText,
   getCurrentStore,
   getPending,
-  getStores,
+  allStores,
+  ZIP_QUESTION,
+  findNearbyStores,
+  getArea,
+  lookupZip,
+  parseZip,
+  setArea,
   groceryModeExpired,
   groceryView,
   looksLikePlannerMessage,
@@ -73,7 +79,7 @@ import {
 } from "./grocery";
 import { keyboardFor } from "./keyboard";
 import { type ViewReply, isView, renderView } from "./views";
-import { WEATHER_QUESTION, findPlace, morningWeather, setPlace } from "./weather";
+import { WEATHER_QUESTION, findPlace, getPlace, morningWeather, setPlace } from "./weather";
 import { MENU_ROWS, menuCommand, menuGreeting } from "./menu";
 import { createRepeat, formatRepeats, ruleFromFields } from "./recurring";
 import { createReminder, formatReminders } from "./reminders";
@@ -220,7 +226,12 @@ async function handleButtonTap(env: Env, tap: NonNullable<TelegramUpdate["callba
     await Promise.all([cancelCheckin(env), cancelEdit(env), cancelReview(env)]);
     await setPending(env, []);
     await startPicker(env, "grocery_store");
-    await sendMessage(env, owner, storeQuestion([], (await getStores(env)).length > 0), await keyboardFor(env));
+    await sendMessage(env, owner, storeQuestion([], (await allStores(env)).length > 0), await keyboardFor(env));
+    return;
+  } else if (kind === "gzip") {
+    await answerCallback(env, tap.id);
+    await startPicker(env, "grocery_zip");
+    await sendMessage(env, owner, ZIP_QUESTION, await keyboardFor(env));
     return;
   } else if (kind === "ga") {
     // ➕ a past item: add it to the list for that store.
@@ -241,13 +252,44 @@ async function handleButtonTap(env: Env, tap: NonNullable<TelegramUpdate["callba
   if (redraw) await editMessage(env, owner, tap.message.message_id, redraw.text, { inline: redraw.inline });
 }
 
+const ZIP_SKIPPED_KEY = "grocery_zip_skipped";
+
+/** Saves the ZIP code and lists the grocery stores near it. */
+async function setGroceryZip(env: Env, text: string): Promise<string | ViewReply> {
+  const zip = parseZip(text);
+  if (!zip) return `That doesn't look like a ZIP code. Send 5 digits, like <i>60601</i>, or tap <b>Skip</b>.`;
+  let area = null;
+  try {
+    area = await lookupZip(zip);
+  } catch (err) {
+    console.error("lookupZip failed", err);
+    return "Sorry, I couldn't look up that ZIP code right now. Please try again in a minute, or tap <b>Skip</b>.";
+  }
+  if (!area) return `I couldn't find ZIP code ${zip}. Please check it, or tap <b>Skip</b>.`;
+  let nearby: string[] = [];
+  try {
+    nearby = await findNearbyStores(area);
+  } catch (err) {
+    console.error("findNearbyStores failed", err);
+  }
+  await setArea(env, area, nearby);
+  // The same place works for the morning weather, if none is set yet.
+  if (!(await getPlace(env))) await setPlace(env, { name: area.name, lat: area.lat, lon: area.lon });
+  await startPicker(env, "grocery_items");
+  const view = await groceryView(env);
+  const found = nearby.length
+    ? `📍 Found ${nearby.length} grocery ${nearby.length === 1 ? "store" : "stores"} near ${escapeHtml(area.name)}.`
+    : `📍 Saved ${escapeHtml(area.name)}, but I couldn't find stores nearby right now. Add yours with ➕ Add a store.`;
+  return { ...view, text: `${found}\n\n${view.text}` };
+}
+
 /** Adds groceries to a store, or asks which store when none is picked yet. Never guesses. */
 async function addGroceryItems(env: Env, items: string[], store: string | null | undefined): Promise<string | ViewReply> {
   if (items.length === 0) return `🛒 Send the items, like <i>milk, eggs, bread</i>.`;
   if (store === undefined) {
     await setPending(env, items);
     await startPicker(env, "grocery_store");
-    return storeQuestion(items, (await getStores(env)).length > 0);
+    return storeQuestion(items, (await allStores(env)).length > 0);
   }
   const added = await addItems(env, items, store);
   await setCurrentStore(env, store);
@@ -292,6 +334,11 @@ export async function respond(env: Env, text: string, chatId: number | string = 
       if (await getCheckin(env)) return "Finish the check-in first, or send /cancel to stop it.";
       await Promise.all([cancelEdit(env), cancelReview(env)]);
       await setCurrentStore(env, undefined);
+      // First time: ask for the ZIP code so nearby stores can be buttons.
+      if (!(await getArea(env)) && (await allStores(env)).length === 0 && !(await getState(env.DB, ZIP_SKIPPED_KEY))) {
+        await startPicker(env, "grocery_zip");
+        return ZIP_QUESTION;
+      }
       await startPicker(env, "grocery_items");
       return groceryView(env);
     }
@@ -375,6 +422,14 @@ export async function respond(env: Env, text: string, chatId: number | string = 
       return groceryView(env);
     }
     return addGroceryItems(env, splitGroceryItems(stripGroceryPrefix(text)), await getCurrentStore(env));
+  }
+  if (picker?.kind === "grocery_zip") {
+    if (/^(skip|cancel|no|not now)[.!]*$/i.test(stripButton(text))) {
+      await setState(env.DB, ZIP_SKIPPED_KEY, "1");
+      await startPicker(env, "grocery_items");
+      return groceryView(env);
+    }
+    return setGroceryZip(env, text);
   }
   if (picker?.kind === "grocery_store") {
     const answer = stripButton(text);
@@ -505,7 +560,7 @@ async function applyAction(env: Env, action: Action, byId: Map<number, Task>): P
     if (!action.category?.trim()) {
       await setPending(env, items);
       await startPicker(env, "grocery_store");
-      return storeQuestion(items, (await getStores(env)).length > 0);
+      return storeQuestion(items, (await allStores(env)).length > 0);
     }
     const store = await rememberStore(env, action.category);
     return `${addedText(await addItems(env, items, store))}\n\nTap 🛒 Groceries to see the list.`;

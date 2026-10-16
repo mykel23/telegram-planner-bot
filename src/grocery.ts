@@ -17,6 +17,11 @@ const HISTORY_KEY = "grocery_history";
 const PENDING_KEY = "grocery_pending";
 const CURRENT_KEY = "grocery_current_store";
 const OPENED_KEY = "grocery_opened_at";
+/** Free public APIs ask callers to say who they are. */
+const USER_AGENT = "telegram-planner-bot (github.com/mykel23/telegram-planner-bot)";
+
+const AREA_KEY = "grocery_area";
+const NEARBY_KEY = "grocery_nearby";
 
 export const ANY_STORE = "Any store";
 /** Callback id for "Any store" (real stores use their position in the saved list). */
@@ -61,6 +66,118 @@ export async function rememberStore(env: Env, name: string): Promise<string> {
   await setState(env.DB, STORES_KEY, JSON.stringify([...stores, clean]));
   return clean;
 }
+
+/** Stores near the saved ZIP code that haven't been used yet. */
+export function getNearby(env: Env): Promise<string[]> {
+  return readJson<string[]>(env, NEARBY_KEY, []);
+}
+
+/** Every store to offer as a button: ones already used first, then nearby ones. */
+export async function allStores(env: Env): Promise<string[]> {
+  const [saved, nearby] = [await getStores(env), await getNearby(env)];
+  return [...saved, ...nearby.filter((n) => !saved.some((s) => same(s, n)))];
+}
+
+// ---------- stores near a ZIP code ----------
+
+export interface Area {
+  zip: string;
+  name: string;
+  lat: number;
+  lon: number;
+}
+
+export function getArea(env: Env): Promise<Area | null> {
+  return readJson<Area | null>(env, AREA_KEY, null);
+}
+
+/** A 5-digit US ZIP code in the message, or null. */
+export function parseZip(text: string): string | null {
+  return text.match(/\b(\d{5})(?:-\d{4})?\b/)?.[1] ?? null;
+}
+
+/** ZIP code -> place, from Zippopotam.us (free, no key). */
+export async function lookupZip(zip: string): Promise<Area | null> {
+  const res = await fetch(`https://api.zippopotam.us/us/${zip}`, { headers: { "user-agent": USER_AGENT } });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`ZIP lookup failed (${res.status})`);
+  return areaFromZipResponse(zip, await res.json());
+}
+
+export function areaFromZipResponse(zip: string, data: unknown): Area | null {
+  const place = (data as { places?: Record<string, string>[] }).places?.[0];
+  if (!place) return null;
+  return {
+    zip,
+    name: `${place["place name"]}, ${place["state abbreviation"]}`,
+    lat: Number(place.latitude),
+    lon: Number(place.longitude),
+  };
+}
+
+interface OsmElement {
+  lat?: number;
+  lon?: number;
+  center?: { lat: number; lon: number };
+  tags?: Record<string, string>;
+}
+
+/** Miles between two points. */
+function miles(aLat: number, aLon: number, bLat: number, bLon: number): number {
+  const rad = Math.PI / 180;
+  const dLat = (bLat - aLat) * rad;
+  const dLon = (bLon - aLon) * rad;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(aLat * rad) * Math.cos(bLat * rad) * Math.sin(dLon / 2) ** 2;
+  return 3959 * 2 * Math.asin(Math.sqrt(h));
+}
+
+/** Most nearby stores offered as buttons. */
+const MAX_NEARBY = 8;
+
+/** Grocery store names from an OpenStreetMap search, closest first, one per chain. */
+export function storesFromOsm(data: unknown, lat: number, lon: number): string[] {
+  const elements = (data as { elements?: OsmElement[] }).elements ?? [];
+  const found = elements
+    .map((e) => {
+      const name = (e.tags?.brand ?? e.tags?.name ?? "").trim();
+      const pLat = e.lat ?? e.center?.lat;
+      const pLon = e.lon ?? e.center?.lon;
+      return { name, distance: pLat != null && pLon != null ? miles(lat, lon, pLat, pLon) : 99 };
+    })
+    .filter((s) => s.name.length > 0 && s.name.length <= 30)
+    .sort((a, b) => a.distance - b.distance);
+  const names: string[] = [];
+  for (const { name } of found) {
+    if (!names.some((n) => same(n, name))) names.push(name);
+    if (names.length === MAX_NEARBY) break;
+  }
+  return names;
+}
+
+/** Supermarkets within about 5 miles, from OpenStreetMap's Overpass API (free, no key). */
+export async function findNearbyStores(area: Area): Promise<string[]> {
+  const query =
+    `[out:json][timeout:20];` +
+    `nwr["shop"~"^(supermarket|wholesale|greengrocer)$"](around:8000,${area.lat},${area.lon});` +
+    `out center tags 200;`;
+  const res = await fetch("https://overpass-api.de/api/interpreter", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", "user-agent": USER_AGENT },
+    body: `data=${encodeURIComponent(query)}`,
+  });
+  if (!res.ok) throw new Error(`Store search failed (${res.status})`);
+  return storesFromOsm(await res.json(), area.lat, area.lon);
+}
+
+/** Saves the ZIP code and the stores near it. */
+export async function setArea(env: Env, area: Area, nearby: string[]): Promise<void> {
+  await setState(env.DB, AREA_KEY, JSON.stringify(area));
+  await setState(env.DB, NEARBY_KEY, JSON.stringify(nearby));
+}
+
+export const ZIP_QUESTION =
+  `🛒 <b>What's your ZIP code?</b>\nI'll find the grocery stores near you and make them buttons. ` +
+  `Or tap <b>Skip</b> to add your stores yourself.`;
 
 /** Store name -> items ever bought there, oldest first. Append-only, so button positions stay valid. */
 function getHistory(env: Env): Promise<Record<string, string[]>> {
@@ -126,10 +243,10 @@ export function getPending(env: Env): Promise<string[]> {
 }
 
 export function storeQuestion(items: string[], hasStores: boolean): string {
-  const what = items.length ? `${items.map((i) => `<b>${escapeHtml(i)}</b>`).join(", ")} from` : "shopping at";
+  const what = items.length ? `Which store are you getting ${items.map((i) => `<b>${escapeHtml(i)}</b>`).join(", ")} from?` : "Which store would you like to add?";
   return hasStores
-    ? `🛒 Which store are you ${items.length ? "getting " + what : what}? Tap one, or type a new store.`
-    : `🛒 Which store are you ${items.length ? "getting " + what : what}? Type the store's name (I'll save it as a button), or tap <b>${ANY_STORE}</b>.`;
+    ? `🛒 ${what} Tap one, or type a new store's name.`
+    : `🛒 ${what} Type the store's name (I'll save it as a button), or tap <b>${ANY_STORE}</b>.`;
 }
 
 export function addedText(added: Grocery[]): string {
@@ -157,40 +274,46 @@ export interface GroceryReply {
   inline: InlineButton[][];
 }
 
-/** The list grouped by store, with a ✅ per item and a ➕ button per store to add more. */
+/**
+ * The grocery list. It leads with the stores: tap one to see past items and add
+ * more, or add a new store. Items on the list get a ✅ to check off.
+ */
 export async function groceryView(env: Env): Promise<GroceryReply> {
-  const [items, stores] = [await listGroceries(env.DB), await getStores(env)];
-  const storeButtons = pairs([
-    ...stores.map((s, i) => ({ text: `➕ ${s.slice(0, 24)}`, data: `gs:${i}` })),
-    { text: stores.length ? "➕ New store" : "➕ Add items", data: "gnew" },
-  ]);
+  const [items, stores, area] = [await listGroceries(env.DB), await allStores(env), await getArea(env)];
+  const storeButtons = pairs(stores.slice(0, 12).map((s, i) => ({ text: `🏪 ${s.slice(0, 24)}`, data: `gs:${i}` })));
+  const extras: InlineButton[] = [{ text: "➕ Add a store", data: "gnew" }, { text: area ? "📍 Change ZIP" : "📍 Stores near me", data: "gzip" }];
+  const near = area ? ` near ${escapeHtml(area.name)}` : "";
+  const choose = stores.length
+    ? `<b>Choose a store${near}</b> to see what you've bought there and add items, or add a new store.`
+    : `<b>Add a store</b> to get started, or tap 📍 to find the stores near you.`;
   if (items.length === 0) {
-    return {
-      text: `🛒 <b>Grocery list</b>\n<i>Empty.</i> Tap a store to add items, or just send them, like <i>milk, eggs, bread</i>.`,
-      inline: storeButtons,
-    };
+    return { text: `🛒 <b>Grocery list</b>\n<i>Empty.</i>\n\n${choose}`, inline: [...storeButtons, extras] };
   }
   const groups = new Map<string, Grocery[]>();
   for (const g of items) groups.set(historyKey(g.store), [...(groups.get(historyKey(g.store)) ?? []), g]);
   const text =
     `🛒 <b>Grocery list</b> (${items.length})\n\n` +
     [...groups].map(([store, list]) => `<b>${escapeHtml(store)}</b>\n${list.map((g) => `• ${escapeHtml(g.item)}`).join("\n")}`).join("\n\n") +
-    `\n\n<i>Tap ✅ when an item is in your cart. Tap ➕ a store to add more.</i>`;
+    `\n\n<i>Tap ✅ when an item is in your cart.</i>\n${choose}`;
   const checkOffs = pairs(items.slice(0, 40).map((g) => ({ text: `✅ ${g.item.slice(0, 28)}`, data: `g:${g.id}` })));
-  return { text, inline: [...checkOffs, ...storeButtons, [{ text: "🧹 Clear all", data: "gclear" }]] };
+  return { text, inline: [...checkOffs, ...storeButtons, extras, [{ text: "🧹 Clear all", data: "gclear" }]] };
 }
 
-/** Callback id for a store, used in ➕ buttons. */
+/** Callback id for a store: its position among the store buttons. */
 export async function storeId(env: Env, store: string | null): Promise<string> {
   if (store === null) return ANY_ID;
-  const i = (await getStores(env)).indexOf(store);
+  const i = (await allStores(env)).findIndex((s) => same(s, store));
   return i < 0 ? ANY_ID : String(i);
 }
 
-/** Reads a store callback id back into a store name (null = Any store); undefined if unknown. */
+/**
+ * Reads a store button back into a store name (null = Any store), saving a
+ * nearby store as one of the user's own once it's picked. Undefined if unknown.
+ */
 export async function storeFromId(env: Env, id: string): Promise<string | null | undefined> {
   if (id === ANY_ID) return null;
-  return (await getStores(env))[Number(id)];
+  const name = (await allStores(env))[Number(id)];
+  return name === undefined ? undefined : rememberStore(env, name);
 }
 
 /**

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { interpretWithRules } from "../src/fallback";
-import { addedText, splitGroceryItems, storeQuestion, storeRows } from "../src/grocery";
+import { addedText, areaFromZipResponse, parseZip, splitGroceryItems, storeQuestion, storeRows, storesFromOsm } from "../src/grocery";
 import { finishButtons } from "../src/views";
 import { describeWeather, weatherLine } from "../src/weather";
 import type { Task } from "../src/env";
@@ -22,6 +22,7 @@ describe("grocery list", () => {
   it("asks which store, and says what was added", () => {
     expect(storeQuestion(["milk"], true)).toContain("<b>milk</b>");
     expect(storeQuestion([], false)).toContain("Type the store's name");
+    expect(storeQuestion([], true)).toBe("🛒 Which store would you like to add? Tap one, or type a new store's name.");
     expect(addedText([{ id: 0, item: "milk", store: "Walmart" }, { id: 0, item: "eggs", store: "Walmart" }])).toBe(
       "➕ Added milk, eggs → <b>Walmart</b>",
     );
@@ -35,6 +36,38 @@ describe("grocery list", () => {
       title: "bread",
       category: "Walmart",
     });
+  });
+});
+
+describe("stores near a ZIP code", () => {
+  it("reads a ZIP code from a message", () => {
+    expect(parseZip("60601")).toBe("60601");
+    expect(parseZip("my zip is 77002-1234")).toBe("77002");
+    expect(parseZip("6060")).toBeNull();
+  });
+
+  it("reads the place from Zippopotam.us", () => {
+    const sample = {
+      "post code": "60601",
+      country: "United States",
+      places: [{ "place name": "Chicago", longitude: "-87.6181", state: "Illinois", "state abbreviation": "IL", latitude: "41.8858" }],
+    };
+    expect(areaFromZipResponse("60601", sample)).toEqual({ zip: "60601", name: "Chicago, IL", lat: 41.8858, lon: -87.6181 });
+    expect(areaFromZipResponse("00000", {})).toBeNull();
+  });
+
+  it("lists nearby stores closest first, one button per chain", () => {
+    const sample = {
+      elements: [
+        { type: "node", lat: 41.9, lon: -87.62, tags: { shop: "supermarket", name: "Jewel-Osco", brand: "Jewel-Osco" } },
+        { type: "way", center: { lat: 41.886, lon: -87.619 }, tags: { shop: "supermarket", name: "Mariano's" } },
+        { type: "node", lat: 41.95, lon: -87.65, tags: { shop: "supermarket", name: "Jewel-Osco #3345", brand: "Jewel-Osco" } },
+        { type: "node", lat: 41.87, lon: -87.63, tags: { shop: "supermarket", name: "ALDI", brand: "Aldi" } },
+        { type: "node", lat: 41.88, lon: -87.62, tags: { shop: "supermarket" } },
+      ],
+    };
+    expect(storesFromOsm(sample, 41.8858, -87.6181)).toEqual(["Mariano's", "Jewel-Osco", "Aldi"]);
+    expect(storesFromOsm({}, 0, 0)).toEqual([]);
   });
 });
 
