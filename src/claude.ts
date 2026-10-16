@@ -99,6 +99,8 @@ const PLAN_SYSTEM = `You are a planning assistant. After the user's weekly check
 - week: what should get done this week.
 - month: important but can wait until later this month.
 
+Weeks run Monday 12:00 AM to Sunday 11:59 PM. The check-in usually happens on Sunday evening: in that case "week" means the week starting tomorrow (Monday), and "day" means Monday.
+
 Use rank as the main signal (1 is most important). Respect a list the user set on purpose unless rank strongly disagrees. Return an assignment for every task ID you are given and no others.`;
 
 export async function planHorizons(env: Env, tasks: Task[], todayLabel: string): Promise<Plan> {

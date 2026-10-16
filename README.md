@@ -15,7 +15,7 @@ To-do apps wait for you to open them. I wanted a planner that comes to me: a sho
 | When | What happens |
 |---|---|
 | **Every morning (7:00 AM)** | The bot sends today's ranked to-do list, what I'm currently working on, and what's up next this week. |
-| **Weekly check-in (Sunday 6:00 PM)** | The bot asks what I need to get done, asks me to rank each new task from 1 to 5, then sends my month, week and day lists. |
+| **Weekly check-in (Sunday 6:00 PM)** | Plans the Monday-to-Sunday week ahead. The bot asks what I need to get done, asks me to rank each new task from 1 to 5, then sends my month, week and day lists. |
 | **Anytime** | I text it in plain English: "add renew passport this month", "done with the bank", "working on the deck", "what's on today?" |
 
 ## Demo
@@ -107,7 +107,7 @@ npm run dev         # local Worker with a local D1 database
 
 The build is tracked in [GitHub Issues](https://github.com/mykel23/telegram-planner-bot/issues) under the milestone **Launch by Oct 31**, with a clear definition of done:
 
-- The daily message arrives on time 7 days in a row
+- The daily message arrives on time 7 days in a row, for a full Monday-to-Sunday week
 - The weekly check-in ranks every task and returns month, week and day lists
 - "done" and "add" update the lists correctly
 - Data survives restarts
