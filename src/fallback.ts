@@ -104,6 +104,14 @@ export function interpretWithRules(text: string, tasks: Task[], ctx: RuleContext
   const remember = trimmed.match(/^(?:remember|note|fyi)[:,]?\s+(?:that\s+)?(.+)$/i);
   if (remember) return { actions: [action({ type: "remember", title: remember[1].trim() })], reply: "" };
 
+  // "groceries: milk, eggs" or "add milk and eggs to my grocery list (at Walmart)"
+  const groceries =
+    trimmed.match(/^(?:groceries|grocery list|grocery)[:\s]+(.+)$/i) ??
+    trimmed.match(/^(?:add\s+)?(.+?)\s+(?:to|on)\s+(?:my|the)?\s*(?:grocery|shopping)\s+list(?:\s+(?:at|for|from)\s+(.+?))?[.!]*$/i);
+  if (groceries) {
+    return { actions: [action({ type: "grocery", title: groceries[1].trim(), category: groceries[2]?.trim() ?? null })], reply: "" };
+  }
+
   const stop = trimmed.match(/^(?:stop repeating|stop|no more)\s+(.+)$/i);
   if (stop && ctx.recurring?.length) {
     const rec = findTask(stop[1], ctx.recurring);

@@ -1,3 +1,4 @@
+import { getStores, storeRows } from "./grocery";
 import { getCheckin } from "./checkin";
 import { FIELDS, getEdit } from "./edit";
 import type { Env } from "./env";
@@ -83,5 +84,8 @@ export async function keyboardFor(env: Env): Promise<Keyboard> {
   }
 
   if (picker?.kind === "add") return "remove";
+  if (picker?.kind === "grocery_items") return [["Done"]];
+  if (picker?.kind === "grocery_store") return storeRows(await getStores(env));
+  if (picker?.kind === "weather_city") return { location: "📍 Share my location", rows: [["Cancel"]] };
   return { menu: MENU_ROWS };
 }

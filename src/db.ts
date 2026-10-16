@@ -47,6 +47,12 @@ const SCHEMA = [
     local_date TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
+  `CREATE TABLE IF NOT EXISTS groceries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item TEXT NOT NULL,
+    store TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
   `CREATE TABLE IF NOT EXISTS sends (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL,
@@ -347,6 +353,37 @@ export async function eventsSince(db: D1Database, fromDate: string): Promise<Tas
     .bind(fromDate)
     .all<TaskEvent>();
   return results;
+}
+
+// ---------- grocery list ----------
+
+export interface Grocery {
+  id: number;
+  item: string;
+  /** Store name, or null for "any store". */
+  store: string | null;
+}
+
+export async function listGroceries(db: D1Database): Promise<Grocery[]> {
+  const { results } = await db.prepare(`SELECT id, item, store FROM groceries ORDER BY store IS NULL, store, id`).all<Grocery>();
+  return results;
+}
+
+export async function addGroceries(db: D1Database, items: string[], store: string | null): Promise<void> {
+  if (items.length === 0) return;
+  await db.batch(items.map((item) => db.prepare(`INSERT INTO groceries (item, store) VALUES (?, ?)`).bind(item.trim(), store)));
+}
+
+export async function getGrocery(db: D1Database, id: number): Promise<Grocery | null> {
+  return db.prepare(`SELECT id, item, store FROM groceries WHERE id = ?`).bind(id).first<Grocery>();
+}
+
+export async function deleteGrocery(db: D1Database, id: number): Promise<void> {
+  await db.prepare(`DELETE FROM groceries WHERE id = ?`).bind(id).run();
+}
+
+export async function clearGroceries(db: D1Database): Promise<void> {
+  await db.prepare(`DELETE FROM groceries`).run();
 }
 
 // ---------- key/value state ----------

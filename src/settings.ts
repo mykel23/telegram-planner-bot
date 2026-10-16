@@ -176,8 +176,12 @@ export async function speak(env: Env, chatId: number | string, text: string, spe
 // ---------- the pickers ----------
 
 export interface Picker {
-  /** "add" means the next message is a task to add. */
-  kind: "voice" | "capacity" | "add";
+  /**
+   * "add": the next message is a task to add.
+   * "grocery_items" / "grocery_store": adding to the grocery list.
+   * "weather_city": the next message (or shared location) is the weather city.
+   */
+  kind: "voice" | "capacity" | "add" | "grocery_items" | "grocery_store" | "weather_city";
 }
 
 export async function getPicker(env: Env): Promise<Picker | null> {

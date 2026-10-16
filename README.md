@@ -14,7 +14,7 @@ To-do apps wait for you to open them. I wanted a planner that comes to me: a sho
 
 | When | What happens |
 |---|---|
-| **Every morning (7:00 AM)** | The bot sends today's ranked to-do list, what I'm currently working on, and what's up next this week. |
+| **Every morning (7:00 AM)** | The bot sends the weather, today's ranked to-do list, what I'm currently working on, and what's coming up later this week. |
 | **Every evening (8:00 PM)** | The bot goes through today's list one task at a time and asks if it got done. I reply yes, no (it rolls over to tomorrow), a new day, or drop. |
 | **Weekly check-in (Sunday 6:00 PM)** | Plans the Monday-to-Sunday week ahead. The bot asks what I need to get done this week or month. For each task it asks for a rank from 1 to 5, the day I'd like to do it, and the latest day it can be done. Then it sends my month, week and day lists, with dates. |
 | **Anytime** | I text it in plain English: "add renew passport this month", "done with the bank", "working on the deck", "what's on today?" |
@@ -28,6 +28,9 @@ To-do apps wait for you to open them. I wanted a planner that comes to me: a sho
 | **Voice replies** | With a voice picked in `/voice`, the bot reads the morning plan and reminders aloud and answers voice notes with voice notes. |
 | **Home menu** | A button menu stays at the bottom of the chat (Today, Week, Add task, Edit, Review day, Reminders and more). `/menu` greets me with a quick status. |
 | **Buttons** | Check-ins and edits show tap buttons (Done, Tomorrow, Drop, ranks, weekdays), so most answers are one tap. |
+| **Tap to finish** | Every list and the morning message have a ✅ button per task. Tapping it marks the task done and redraws the list in place. |
+| **Weather** | The morning message includes the day's forecast (Open-Meteo, free, no key). `/weather` sets the city, or I can share my location. |
+| **Grocery list** | `/grocery` keeps a list grouped by store. I send several items at once ("milk, eggs and bread"), pick the store once and it becomes a button. Each store remembers what I bought there and shows those items as ➕ buttons next time, so nothing is added without asking. In the store I tap ✅ to check items off. |
 
 ## Demo
 
@@ -95,6 +98,8 @@ flowchart LR
 | `/menu` | Greeting, quick status and the button menu |
 | `/work`, `/health`, … | Shows one category's tasks |
 | `/today` `/week` `/month` `/lists` | Shows lists |
+| `/grocery` / `add milk and eggs to my grocery list` | Grocery list by store, with past items as buttons |
+| `/weather` | Sets the city for the morning forecast |
 | `/edit` | Guided edit: pick a task by number, then change its rank, preferred day, latest day, name, list or category |
 | `/checkin` | Starts the weekly check-in now |
 | `/morning` | Sends the good morning message now |

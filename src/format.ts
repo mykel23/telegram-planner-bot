@@ -51,9 +51,14 @@ function byPriority(a: Task, b: Task): number {
   return a.rank - b.rank || (a.due_date ?? "9999").localeCompare(b.due_date ?? "9999") || a.id - b.id;
 }
 
+/** The tasks one list shows, in the order it shows them. */
+export function listTasks(tasks: Task[], horizon: Horizon, labels: PeriodLabels): Task[] {
+  return tasks.filter((t) => effectiveHorizon(t, labels) === horizon).sort(byPriority);
+}
+
 /** Tasks for one list, most important first. */
 export function formatList(tasks: Task[], horizon: Horizon, labels: PeriodLabels): string {
-  const items = tasks.filter((t) => effectiveHorizon(t, labels) === horizon).sort(byPriority);
+  const items = listTasks(tasks, horizon, labels);
   const body = items.length
     ? items.map((t, i) => formatTaskLine(t, i + 1, labels.iso.day)).join("\n")
     : "<i>Nothing here yet.</i>";
@@ -86,7 +91,13 @@ function todaySplit(tasks: Task[], labels: PeriodLabels, dayCap: number) {
   return { today: all.slice(0, dayCap), extra: all.slice(dayCap) };
 }
 
-export function formatDailyMessage(tasks: Task[], dateLabel: string, labels: PeriodLabels, dayCap = Infinity): string {
+export function formatDailyMessage(
+  tasks: Task[],
+  dateLabel: string,
+  labels: PeriodLabels,
+  dayCap = Infinity,
+  weather = "",
+): string {
   const doing = tasks.filter((t) => t.status === "doing");
   const { today, extra } = todaySplit(tasks, labels, dayCap);
   const upNext = tasks
@@ -97,7 +108,8 @@ export function formatDailyMessage(tasks: Task[], dateLabel: string, labels: Per
 
   const parts = [
     `☀️ <b>Good morning!</b> Here's your plan for ${escapeHtml(dateLabel)}.\n` +
-      `<i>This week: ${escapeHtml(labels.week)} (${escapeHtml(labels.month)})</i>`,
+      `<i>This week: ${escapeHtml(labels.week)} (${escapeHtml(labels.month)})</i>` +
+      (weather ? `\n${weather}` : ""),
   ];
 
   if (tasks.length === 0) {
@@ -158,9 +170,13 @@ export const HELP_TEXT = [
   "• <code>add dentist, category Health</code>, then <code>/health</code> shows that category",
   "• 🎙 Send a voice note and I'll treat it like a text",
   "• <code>remember I work night shifts on Tuesdays</code> and I'll plan around it",
+  "• Tap ✅ under a list to mark a task done",
+  "• <code>add milk and eggs to my grocery list</code>",
   "",
   "<b>Commands</b>",
   "/today /week /month /lists: show your lists",
+  "/grocery: your grocery list, by store",
+  "/weather: set your city for the morning forecast",
   "/edit: change a task's rank, days, name, list or category",
   "/repeats: your repeating tasks",
   "/reminders: upcoming reminders",

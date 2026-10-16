@@ -54,6 +54,7 @@ export const ActionSchema = z.object({
     "cancel_reminder",
     "remember",
     "forget",
+    "grocery",
   ]),
   task_id: z
     .number()
@@ -66,7 +67,7 @@ export const ActionSchema = z.object({
     .string()
     .nullable()
     .describe(
-      "Task title for add or repeat, a new title for update, what to be reminded about for remind, or the fact to keep for remember. Otherwise null.",
+      "Task title for add or repeat, a new title for update, what to be reminded about for remind, the fact to keep for remember, or the items for grocery (comma-separated). Otherwise null.",
     ),
   horizon: z
     .enum(["day", "week", "month"])
@@ -84,7 +85,7 @@ export const ActionSchema = z.object({
   category: z
     .string()
     .nullable()
-    .describe("One-word category for add, repeat or update (Work, Personal, Health, Home, Errands, Finance, or the user's own). For show, filters to that category. Null otherwise."),
+    .describe("One-word category for add, repeat or update (Work, Personal, Health, Home, Errands, Finance, or the user's own). For show, filters to that category. For grocery, the store name if the user names one. Null otherwise."),
   repeat_days: z.array(DAY).nullable().describe("For repeat: the weekdays it repeats on. All seven for every day. Null otherwise."),
   repeat_month_day: z.number().int().nullable().describe("For repeat: day of the month (1-31) for monthly repeats. Null otherwise."),
   remind_at: z
@@ -119,6 +120,7 @@ Turn the user's message into a list of actions:
 - cancel_reminder: cancel an upcoming reminder. Use the ID from the reminders list.
 - remember: the user tells you something about themselves or their life to keep in mind for planning ("remember I work night shifts on Tuesdays", "I'm caring for my dad this month", "I'm most focused in the mornings"). Put the fact in title, in third person and short ("Works night shifts on Tuesdays"). Only for lasting facts, not tasks.
 - forget: the user says a remembered fact is no longer true. Use the ID from the memory list.
+- grocery: things to buy at the store ("add milk and eggs to my grocery list", "I need bread from Walmart", "groceries: rice, chicken"). Put the items in title, comma-separated, and the store in category only if the user names one. Use grocery instead of add for shopping items.
 - Category: for add and repeat, set a category when the task makes it obvious (a work meeting is Work, the gym is Health, groceries are Errands). Reuse the user's existing categories when they fit.
 
 Rules:

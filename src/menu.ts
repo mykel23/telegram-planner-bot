@@ -21,12 +21,16 @@ export const MENU: [label: string, command: string][][] = [
     ["🌙 Review day", "/review"],
   ],
   [
+    ["🛒 Groceries", "/grocery"],
     ["⏰ Reminders", "/reminders"],
     ["🔁 Repeats", "/repeats"],
-    ["🧠 Insights", "/insights"],
   ],
   [
+    ["🌤 Weather", "/weather"],
+    ["🧠 Insights", "/insights"],
     ["🔊 Voice", "/voice"],
+  ],
+  [
     ["🧭 Capacity", "/capacity"],
     ["❓ Help", "/help"],
   ],
@@ -62,13 +66,15 @@ export async function menuGreeting(env: Env, labels: PeriodLabels, now: Date = n
 }
 
 /** Commands shown in Telegram's Menu button. Bump the version when this list changes. */
-export const COMMANDS_VERSION = "4";
+export const COMMANDS_VERSION = "5";
 export const BOT_COMMANDS: { command: string; description: string }[] = [
   { command: "menu", description: "Show the menu" },
   { command: "today", description: "Today's list" },
   { command: "week", description: "This week's list" },
   { command: "lists", description: "Month, week and day lists" },
   { command: "morning", description: "Send the good morning message now" },
+  { command: "grocery", description: "Grocery list" },
+  { command: "weather", description: "Set your city for the weather" },
   { command: "edit", description: "Change a task" },
   { command: "review", description: "Evening check-in now" },
   { command: "checkin", description: "Weekly check-in now" },

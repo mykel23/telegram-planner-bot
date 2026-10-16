@@ -1,12 +1,15 @@
 import { cancelCheckin, getCheckin, handleCheckinReply, startCheckin } from "./checkin";
 import { type Action, type Interpretation, interpretMessage } from "./claude";
 import { cancelEdit, getEdit, handleEditReply, startEdit } from "./edit";
-import { cancelReview, getReview, handleReviewReply, startReview } from "./review";
+import { cancelReview, getReview, handleReviewReply, startReview, stripButton } from "./review";
 import {
   addMemory,
   addTask,
   clampRank,
+  clearGroceries,
+  deleteGrocery,
   deleteMemory,
+  getTask,
   eventsSince,
   listMemories,
   logEvent,
@@ -48,11 +51,33 @@ import {
   toSpeech,
   voiceMenu,
 } from "./settings";
+import {
+  ANY_STORE,
+  addItems,
+  addedText,
+  getCurrentStore,
+  getPending,
+  getStores,
+  groceryModeExpired,
+  groceryView,
+  looksLikePlannerMessage,
+  stripGroceryPrefix,
+  pastItem,
+  rememberStore,
+  setCurrentStore,
+  setPending,
+  splitGroceryItems,
+  storeFromId,
+  storeQuestion,
+  storeView,
+} from "./grocery";
 import { keyboardFor } from "./keyboard";
+import { type ViewReply, isView, renderView } from "./views";
+import { WEATHER_QUESTION, findPlace, morningWeather, setPlace } from "./weather";
 import { MENU_ROWS, menuCommand, menuGreeting } from "./menu";
 import { createRepeat, formatRepeats, ruleFromFields } from "./recurring";
 import { createReminder, formatReminders } from "./reminders";
-import { sendMessage, type TelegramUpdate } from "./telegram";
+import { answerCallback, editMessage, sendMessage, type TelegramUpdate } from "./telegram";
 import { clockTime, friendlyDate, periodLabels, shortDate, zonedTimeToUtc } from "./time";
 import { MAX_VOICE_SECONDS, transcribeVoice } from "./voice";
 
@@ -77,10 +102,11 @@ export const NAME_KEY = "owner_name";
  * so nobody else can read or change the task lists.
  */
 export async function handleUpdate(env: Env, update: TelegramUpdate): Promise<void> {
+  if (update.callback_query) return handleButtonTap(env, update.callback_query);
   const message = update.message;
   if (!message || message.chat.type !== "private") return;
   let text = message.text?.trim();
-  if (!text && !message.voice) return;
+  if (!text && !message.voice && !message.location) return;
 
   const chatId = message.chat.id;
   const owner = await getState(env.DB, OWNER_KEY);
@@ -106,6 +132,15 @@ export async function handleUpdate(env: Env, update: TelegramUpdate): Promise<vo
     await setState(env.DB, NAME_KEY, message.from.first_name);
   }
 
+  // The only reason to share a location is the weather.
+  if (message.location) {
+    await setPlace(env, { name: "your area", lat: message.location.latitude, lon: message.location.longitude });
+    await cancelPicker(env);
+    const line = await morningWeather(env);
+    await sendMessage(env, chatId, `🌤 Got it. Your morning message will include the forecast for your area.\n${line}`, await keyboardFor(env));
+    return;
+  }
+
   let heard = "";
   if (!text && message.voice) {
     if (message.voice.duration > MAX_VOICE_SECONDS) {
@@ -128,16 +163,105 @@ export async function handleUpdate(env: Env, update: TelegramUpdate): Promise<vo
 
   const reply = await respond(env, text!, chatId);
   if (!reply) return;
-  await sendMessage(env, chatId, heard + reply, await keyboardFor(env));
-  // Talk back when talked to: a voice note gets a spoken answer if a voice is on.
-  if (heard) await speak(env, chatId, toSpeech(reply));
+  if (typeof reply === "string") {
+    await sendMessage(env, chatId, heard + reply, await keyboardFor(env));
+  } else {
+    // A list with ✅ buttons. The menu buttons stay open underneath.
+    await sendMessage(env, chatId, heard + reply.text, reply.inline.length ? { inline: reply.inline } : await keyboardFor(env));
+  }
+  const spoken = typeof reply === "string" ? toSpeech(reply) : (reply.script ?? (heard ? toSpeech(reply.text) : ""));
+  // Talk back when talked to (a voice note), or read the morning plan, if a voice is on.
+  if (heard || (typeof reply !== "string" && reply.script)) await speak(env, chatId, spoken);
+}
+
+/** A tap on a ✅ button under a list or the grocery list. */
+async function handleButtonTap(env: Env, tap: NonNullable<TelegramUpdate["callback_query"]>): Promise<void> {
+  const owner = await getState(env.DB, OWNER_KEY);
+  const chat = tap.message?.chat.id;
+  if (!owner || String(chat) !== owner || !tap.message || !tap.data) {
+    await answerCallback(env, tap.id);
+    return;
+  }
+  const [kind, id, view] = tap.data.split(":");
+  let toast = "";
+  let redraw: ViewReply | null = null;
+
+  if (kind === "d") {
+    const task = await getTask(env.DB, Number(id));
+    if (task && task.status !== "done") {
+      await updateTask(env.DB, task.id, { status: "done" });
+      await logEvent(env.DB, "done", task, periodLabels(new Date(), env.TIMEZONE).iso.day);
+      toast = `✅ Done: ${task.title}`;
+    } else {
+      toast = "Already done.";
+    }
+    if (view && isView(view)) redraw = await renderView(env, view);
+  } else if (kind === "g") {
+    await deleteGrocery(env.DB, Number(id));
+    toast = "🛒 Checked off";
+    redraw = await groceryView(env);
+  } else if (kind === "gclear") {
+    await clearGroceries(env.DB);
+    toast = "🧹 List cleared";
+    redraw = await groceryView(env);
+  } else if (kind === "gs") {
+    // ➕ a store: show what was bought there before.
+    const store = await storeFromId(env, id);
+    await answerCallback(env, tap.id);
+    if (store === undefined) return;
+    await Promise.all([cancelCheckin(env), cancelEdit(env), cancelReview(env)]);
+    await setCurrentStore(env, store);
+    await startPicker(env, "grocery_items");
+    const screen = await storeView(env, store);
+    await sendMessage(env, owner, screen.text, { inline: screen.inline });
+    return;
+  } else if (kind === "gnew") {
+    await answerCallback(env, tap.id);
+    await Promise.all([cancelCheckin(env), cancelEdit(env), cancelReview(env)]);
+    await setPending(env, []);
+    await startPicker(env, "grocery_store");
+    await sendMessage(env, owner, storeQuestion([], (await getStores(env)).length > 0), await keyboardFor(env));
+    return;
+  } else if (kind === "ga") {
+    // ➕ a past item: add it to the list for that store.
+    const store = await storeFromId(env, id);
+    const item = store === undefined ? undefined : await pastItem(env, store, Number(view));
+    if (store !== undefined && item) {
+      await addItems(env, [item], store);
+      toast = `➕ ${item}`;
+      redraw = await storeView(env, store);
+    }
+  } else if (kind === "gdone") {
+    await cancelPicker(env);
+    await setCurrentStore(env, undefined);
+    redraw = await groceryView(env);
+  }
+
+  await answerCallback(env, tap.id, toast);
+  if (redraw) await editMessage(env, owner, tap.message.message_id, redraw.text, { inline: redraw.inline });
+}
+
+/** Adds groceries to a store, or asks which store when none is picked yet. Never guesses. */
+async function addGroceryItems(env: Env, items: string[], store: string | null | undefined): Promise<string | ViewReply> {
+  if (items.length === 0) return `🛒 Send the items, like <i>milk, eggs, bread</i>.`;
+  if (store === undefined) {
+    await setPending(env, items);
+    await startPicker(env, "grocery_store");
+    return storeQuestion(items, (await getStores(env)).length > 0);
+  }
+  const added = await addItems(env, items, store);
+  await setCurrentStore(env, store);
+  await startPicker(env, "grocery_items");
+  return storeView(env, store, addedText(added) + "\n");
 }
 
 /** Works out the reply to one message from the owner. */
-export async function respond(env: Env, text: string, chatId: number | string = ""): Promise<string> {
+export async function respond(env: Env, text: string, chatId: number | string = ""): Promise<string | ViewReply> {
   const tapped = menuCommand(text);
   const command = tapped ?? (text.startsWith("/") ? text.split(/[\s@]/)[0].toLowerCase() : null);
   const labels = periodLabels(new Date(), env.TIMEZONE);
+  // Any command or menu tap closes an open question (grocery, weather, voice...).
+  if (command && command !== "/cancel") await cancelPicker(env);
 
   switch (command) {
     case "/help":
@@ -152,21 +276,30 @@ export async function respond(env: Env, text: string, chatId: number | string = 
       await startPicker(env, "add");
       return `➕ What should I add? Type it or send a voice note, like <i>call the bank Friday, rank 2</i>.`;
     case "/today":
-      return formatList(await listActiveTasks(env.DB), "day", labels);
+      return renderView(env, "t");
     case "/week":
-      return formatList(await listActiveTasks(env.DB), "week", labels);
+      return renderView(env, "w");
     case "/month":
       return formatList(await listActiveTasks(env.DB), "month", labels);
     case "/lists":
     case "/all":
-      return formatAllLists(await listActiveTasks(env.DB), labels);
+      return renderView(env, "l");
     case "/morning":
-    case "/daily": {
-      const [tasks, cap] = [await listActiveTasks(env.DB), await dayCap(env)];
-      const dateLabel = friendlyDate(new Date(), env.TIMEZONE);
-      if (chatId !== "") await speak(env, chatId, morningScript(tasks, dateLabel, labels, cap));
-      return formatDailyMessage(tasks, dateLabel, labels, cap);
+    case "/daily":
+      return renderView(env, "m");
+    case "/grocery":
+    case "/groceries": {
+      if (await getCheckin(env)) return "Finish the check-in first, or send /cancel to stop it.";
+      await Promise.all([cancelEdit(env), cancelReview(env)]);
+      await setCurrentStore(env, undefined);
+      await startPicker(env, "grocery_items");
+      return groceryView(env);
     }
+    case "/weather":
+      if (await getCheckin(env)) return "Finish the check-in first, or send /cancel to stop it.";
+      await Promise.all([cancelEdit(env), cancelReview(env)]);
+      await startPicker(env, "weather_city");
+      return WEATHER_QUESTION;
     case "/checkin":
       await Promise.all([cancelEdit(env), cancelReview(env), cancelPicker(env)]);
       return startCheckin(env);
@@ -229,7 +362,47 @@ export async function respond(env: Env, text: string, chatId: number | string = 
     return `I don't know that command.\n\n${HELP_TEXT}`;
   }
 
-  const picker = await getPicker(env);
+  let picker = await getPicker(env);
+  if (picker?.kind === "grocery_items" && ((await groceryModeExpired(env)) || looksLikePlannerMessage(text))) {
+    // Back to normal: this message is for the planner, not the grocery list.
+    await cancelPicker(env);
+    await setCurrentStore(env, undefined);
+    picker = null;
+  } else if (picker?.kind === "grocery_items") {
+    if (/^(done|that'?s (all|it)|nothing|no)[.!]*$/i.test(stripButton(text))) {
+      await cancelPicker(env);
+      await setCurrentStore(env, undefined);
+      return groceryView(env);
+    }
+    return addGroceryItems(env, splitGroceryItems(stripGroceryPrefix(text)), await getCurrentStore(env));
+  }
+  if (picker?.kind === "grocery_store") {
+    const answer = stripButton(text);
+    const store = new RegExp(`^(${ANY_STORE}|any|anywhere|skip|none)$`, "i").test(answer) ? null : await rememberStore(env, answer);
+    const pending = await getPending(env);
+    await setPending(env, []);
+    if (pending.length) return addGroceryItems(env, pending, store);
+    await setCurrentStore(env, store);
+    await startPicker(env, "grocery_items");
+    return storeView(env, store);
+  }
+  if (picker?.kind === "weather_city") {
+    if (/^(cancel|never ?mind|skip)[.!]*$/i.test(stripButton(text))) {
+      await cancelPicker(env);
+      return "Okay, nothing changed.";
+    }
+    let place = null;
+    try {
+      place = await findPlace(text);
+    } catch (err) {
+      console.error("findPlace failed", err);
+      return "Sorry, I couldn't look that up right now. Please try again in a minute.";
+    }
+    if (!place) return `I couldn't find "${escapeHtml(text)}". Try a city and state, like <i>Houston, TX</i>.`;
+    await setPlace(env, place);
+    await cancelPicker(env);
+    return `🌤 Got it: <b>${escapeHtml(place.name)}</b>. Your morning message will include the forecast:\n${await morningWeather(env)}`;
+  }
   if (picker?.kind === "add") {
     await cancelPicker(env);
     if (!/^(add|todo|new task)\b/i.test(text)) text = `add ${text}`;
@@ -324,6 +497,18 @@ async function applyAction(env: Env, action: Action, byId: Map<number, Task>): P
     // Remove the open copy too, so it stops showing up right away.
     for (const copy of await openTasksFromRecurring(env.DB, rec.id)) await deleteTask(env.DB, copy.id);
     return `🛑 <b>${escapeHtml(rec.title)}</b> won't repeat anymore.`;
+  }
+
+  if (action.type === "grocery") {
+    const items = splitGroceryItems(action.title ?? "");
+    if (items.length === 0) return null;
+    if (!action.category?.trim()) {
+      await setPending(env, items);
+      await startPicker(env, "grocery_store");
+      return storeQuestion(items, (await getStores(env)).length > 0);
+    }
+    const store = await rememberStore(env, action.category);
+    return `${addedText(await addItems(env, items, store))}\n\nTap 🛒 Groceries to see the list.`;
   }
 
   if (action.type === "remember") {

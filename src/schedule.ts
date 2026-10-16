@@ -5,13 +5,13 @@ import { keyboardFor } from "./keyboard";
 import { generateRecurring } from "./recurring";
 import { sendDueReminders } from "./reminders";
 import { startReview } from "./review";
-import { ensureSchema, getState, listActiveTasks, logSend, setState } from "./db";
+import { ensureSchema, getState, logSend, setState } from "./db";
 import type { Env } from "./env";
-import { formatDailyMessage, morningScript } from "./format";
-import { dayCap, speak } from "./settings";
+import { speak } from "./settings";
+import { renderView } from "./views";
 import { BOT_COMMANDS, COMMANDS_VERSION } from "./menu";
-import { sendMessage, setMyCommands } from "./telegram";
-import { friendlyDate, isDailyDue, isWeeklyDue, localTime, periodLabels } from "./time";
+import { ALLOWED_UPDATES, getWebhookInfo, sendMessage, setMyCommands, setWebhook } from "./telegram";
+import { isDailyDue, isWeeklyDue, localTime } from "./time";
 
 /**
  * Runs every minute from the cron trigger. In the owner's time zone it:
@@ -34,6 +34,9 @@ export async function runSchedule(env: Env, now: Date): Promise<void> {
       async () => {
         if ((await getState(env.DB, "commands_version")) === COMMANDS_VERSION) return;
         await setMyCommands(env, BOT_COMMANDS);
+        // Button taps (✅ tap to finish) only arrive if the webhook asks for them.
+        const info = await getWebhookInfo(env);
+        if (info.url && !ALLOWED_UPDATES.every((u) => info.allowed_updates?.includes(u))) await setWebhook(env, info.url);
         await setState(env.DB, "commands_version", COMMANDS_VERSION);
       },
     ],
@@ -43,12 +46,11 @@ export async function runSchedule(env: Env, now: Date): Promise<void> {
       "daily",
       async () => {
         if (!isDailyDue(local, Number(env.DAILY_HOUR), await getState(env.DB, "last_daily_date"))) return;
-        const tasks = await listActiveTasks(env.DB);
-        const [dateLabel, labels, cap] = [friendlyDate(now, env.TIMEZONE), periodLabels(now, env.TIMEZONE), await dayCap(env)];
-        await sendMessage(env, owner, formatDailyMessage(tasks, dateLabel, labels, cap), await keyboardFor(env));
+        const morning = await renderView(env, "m", now);
+        await sendMessage(env, owner, morning.text, morning.inline.length ? { inline: morning.inline } : await keyboardFor(env));
         await setState(env.DB, "last_daily_date", local.date);
         await logSend(env.DB, "daily", local.date);
-        await speak(env, owner, morningScript(tasks, dateLabel, labels, cap));
+        if (morning.script) await speak(env, owner, morning.script);
       },
     ],
     [
