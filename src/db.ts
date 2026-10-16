@@ -160,7 +160,7 @@ export async function clearState(db: D1Database, key: string): Promise<void> {
 
 // ---------- send log (proof that scheduled messages went out) ----------
 
-export async function logSend(db: D1Database, kind: "daily" | "weekly", localDate: string): Promise<void> {
+export async function logSend(db: D1Database, kind: "daily" | "evening" | "weekly", localDate: string): Promise<void> {
   await db.prepare(`INSERT INTO sends (kind, local_date) VALUES (?, ?)`).bind(kind, localDate).run();
 }
 

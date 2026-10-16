@@ -1,5 +1,7 @@
 import { OWNER_KEY } from "./bot";
-import { startCheckin } from "./checkin";
+import { getCheckin, startCheckin } from "./checkin";
+import { getEdit } from "./edit";
+import { startReview } from "./review";
 import { ensureSchema, getState, listActiveTasks, logSend, setState } from "./db";
 import type { Env } from "./env";
 import { formatDailyMessage } from "./format";
@@ -25,6 +27,14 @@ export async function runSchedule(env: Env, now: Date): Promise<void> {
     await sendMessage(env, owner, formatDailyMessage(tasks, friendlyDate(now, env.TIMEZONE), periodLabels(now, env.TIMEZONE)));
     await setState(env.DB, "last_daily_date", local.date);
     await logSend(env.DB, "daily", local.date);
+  }
+
+  // Evening check-in. Waits (and retries next hour) if a weekly check-in or edit is in progress.
+  const lastEvening = await getState(env.DB, "last_evening_date");
+  if (isDailyDue(local, Number(env.EVENING_HOUR), lastEvening) && !(await getCheckin(env)) && !(await getEdit(env))) {
+    await sendMessage(env, owner, await startReview(env, now));
+    await setState(env.DB, "last_evening_date", local.date);
+    await logSend(env.DB, "evening", local.date);
   }
 
   const lastWeekly = await getState(env.DB, "last_weekly_date");

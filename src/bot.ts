@@ -1,6 +1,7 @@
 import { cancelCheckin, getCheckin, handleCheckinReply, startCheckin } from "./checkin";
 import { type Action, type Interpretation, interpretMessage } from "./claude";
 import { cancelEdit, getEdit, handleEditReply, startEdit } from "./edit";
+import { cancelReview, getReview, handleReviewReply, startReview } from "./review";
 import { addTask, clampRank, deleteTask, getState, listActiveTasks, setState, updateTask } from "./db";
 import type { Env, Horizon, Task } from "./env";
 import { HELP_TEXT, escapeHtml, formatAllLists, formatDailyMessage, formatList, horizonLabel } from "./format";
@@ -76,16 +77,26 @@ export async function respond(env: Env, text: string): Promise<string> {
     case "/daily":
       return formatDailyMessage(await listActiveTasks(env.DB), friendlyDate(new Date(), env.TIMEZONE), labels);
     case "/checkin":
-      await cancelEdit(env);
+      await Promise.all([cancelEdit(env), cancelReview(env)]);
       return startCheckin(env);
     case "/edit":
       if (await getCheckin(env)) return "Finish the check-in first, or send /cancel to stop it.";
+      await cancelReview(env);
       return startEdit(env, labels.iso.day);
+    case "/review":
+      if (await getCheckin(env)) return "Finish the check-in first, or send /cancel to stop it.";
+      await cancelEdit(env);
+      return startReview(env);
     case "/cancel": {
-      const [checkinActive, editActive] = await Promise.all([getCheckin(env), getEdit(env)]);
-      await Promise.all([cancelCheckin(env), cancelEdit(env)]);
+      const [checkinActive, editActive, reviewActive] = await Promise.all([
+        getCheckin(env),
+        getEdit(env),
+        getReview(env),
+      ]);
+      await Promise.all([cancelCheckin(env), cancelEdit(env), cancelReview(env)]);
       if (checkinActive) return "Check-in cancelled. Nothing new was saved.";
       if (editActive) return "Edit stopped. Changes you already confirmed are kept.";
+      if (reviewActive) return "Evening check-in stopped. Answers you already gave are kept.";
       return "There's nothing to cancel.";
     }
   }
@@ -95,6 +106,9 @@ export async function respond(env: Env, text: string): Promise<string> {
 
   const editing = await getEdit(env);
   if (editing) return handleEditReply(env, editing, text);
+
+  const review = await getReview(env);
+  if (review) return handleReviewReply(env, review, text);
 
   const tasks = await listActiveTasks(env.DB);
   let interpretation: Interpretation;

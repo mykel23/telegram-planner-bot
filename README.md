@@ -15,6 +15,7 @@ To-do apps wait for you to open them. I wanted a planner that comes to me: a sho
 | When | What happens |
 |---|---|
 | **Every morning (7:00 AM)** | The bot sends today's ranked to-do list, what I'm currently working on, and what's up next this week. |
+| **Every evening (8:00 PM)** | The bot goes through today's list one task at a time and asks if it got done. I reply yes, no (it rolls over to tomorrow), a new day, or drop. |
 | **Weekly check-in (Sunday 6:00 PM)** | Plans the Monday-to-Sunday week ahead. The bot asks what I need to get done this week or month. For each task it asks for a rank from 1 to 5, the day I'd like to do it, and the latest day it can be done. Then it sends my month, week and day lists, with dates. |
 | **Anytime** | I text it in plain English: "add renew passport this month", "done with the bank", "working on the deck", "what's on today?" |
 
@@ -35,7 +36,7 @@ flowchart LR
 ```
 
 - **Telegram → Worker:** Telegram delivers each message to the Worker's `/telegram` webhook. A secret header proves the request really came from Telegram.
-- **Cron → Worker:** Cloudflare runs the Worker every hour. The code converts the time to my time zone and sends the morning message or starts the check-in when it's due. This keeps 7:00 AM at 7:00 AM through daylight saving changes, which a fixed UTC cron can't do.
+- **Cron → Worker:** Cloudflare runs the Worker every hour. The code converts the time to my time zone and sends the morning message, the evening check-in or the weekly check-in when each is due. This keeps 7:00 AM at 7:00 AM through daylight saving changes, which a fixed UTC cron can't do.
 - **Worker → Claude:** Claude turns free-form messages into structured actions (add, done, start, update, remove, show) and sorts tasks into month, week and day lists after the check-in. Both calls use [structured outputs](https://docs.claude.com/en/docs/build-with-claude/structured-outputs), so the bot always gets valid JSON back.
 - **Worker → D1:** Tasks, ranks, status and the check-in's progress are stored in a SQLite database, so nothing is lost when the Worker restarts or redeploys.
 
@@ -71,7 +72,8 @@ flowchart LR
 | `/edit` | Guided edit: pick a task by number, then change its rank, preferred day, latest day, name or list |
 | `/checkin` | Starts the weekly check-in now |
 | `/daily` | Sends the morning message now |
-| `/cancel` | Stops a check-in or edit in progress |
+| `/review` | Starts the evening check-in now |
+| `/cancel` | Stops a check-in, edit or evening review in progress |
 
 Ranks go from 1 (most important) to 5.
 
@@ -91,7 +93,7 @@ Everything is done in the browser. No software to install.
 7. **Connect Telegram.** Open `https://<your-worker>.workers.dev/setup?key=<your TELEGRAM_WEBHOOK_SECRET>` in your browser.
 8. **Say hello.** Send `/start` to your bot. You're now its owner.
 
-To change the schedule or time zone, edit `TIMEZONE`, `DAILY_HOUR`, `WEEKLY_DAY` and `WEEKLY_HOUR` in `wrangler.toml` and push.
+To change the schedule or time zone, edit `TIMEZONE`, `DAILY_HOUR`, `EVENING_HOUR`, `WEEKLY_DAY` and `WEEKLY_HOUR` in `wrangler.toml` and push.
 
 To check that scheduled messages are going out, open `https://<your-worker>.workers.dev/status?key=<your TELEGRAM_WEBHOOK_SECRET>`. It lists recent sends without showing any task data.
 

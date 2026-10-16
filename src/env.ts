@@ -11,6 +11,7 @@ export interface Env {
   // Plain settings from wrangler.toml
   TIMEZONE: string;
   DAILY_HOUR: string;
+  EVENING_HOUR: string;
   WEEKLY_DAY: string;
   WEEKLY_HOUR: string;
   CLAUDE_MODEL: string;

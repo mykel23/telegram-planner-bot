@@ -110,7 +110,8 @@ export const HELP_TEXT = [
   "/edit: change a task's rank, days, name or list",
   "/checkin: start the weekly check-in now",
   "/daily: send the morning message now",
-  "/cancel: stop a check-in or edit in progress",
+  "/review: start the evening check-in now",
+  "/cancel: stop a check-in, edit or evening review in progress",
   "",
   "Ranks go from 1 (most important) to 5.",
 ].join("\n");
