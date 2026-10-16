@@ -62,12 +62,13 @@ export async function menuGreeting(env: Env, labels: PeriodLabels, now: Date = n
 }
 
 /** Commands shown in Telegram's Menu button. Bump the version when this list changes. */
-export const COMMANDS_VERSION = "2";
+export const COMMANDS_VERSION = "3";
 export const BOT_COMMANDS: { command: string; description: string }[] = [
   { command: "menu", description: "Show the menu" },
   { command: "today", description: "Today's list" },
   { command: "week", description: "This week's list" },
   { command: "lists", description: "Month, week and day lists" },
+  { command: "daily", description: "Send the good morning message now" },
   { command: "edit", description: "Change a task" },
   { command: "review", description: "Evening check-in now" },
   { command: "checkin", description: "Weekly check-in now" },
