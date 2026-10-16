@@ -1,5 +1,5 @@
-import { planHorizons, sanitizePlan } from "./claude";
-import { addTask, clearState, getState, listActiveTasks, setState, updateTask } from "./db";
+import { planHorizons, sanitizePlan, suggestedCategories } from "./claude";
+import { addTask, clearState, getState, getTask, listActiveTasks, setState, updateTask } from "./db";
 import type { Env, Horizon } from "./env";
 import { escapeHtml, formatAllLists } from "./format";
 import { planWithRules } from "./fallback";
@@ -49,7 +49,14 @@ const FINISHED_WORDS = new Set([
 ]);
 
 export function isFinishedSignal(text: string): boolean {
-  return FINISHED_WORDS.has(text.trim().toLowerCase().replace(/[.!]+$/, ""));
+  return FINISHED_WORDS.has(
+    text
+      .trim()
+      .toLowerCase()
+      .replace(/^[^\p{L}\p{N}]+/u, "")
+      .replace(/[.!]+$/, "")
+      .trim(),
+  );
 }
 
 /** Splits a message into task titles, dropping bullets and numbering. */
@@ -192,10 +199,12 @@ async function finishCheckin(env: Env, state: CheckinState): Promise<string> {
 
   const tasks = await listActiveTasks(env.DB);
   let assignments: Map<number, Horizon>;
+  let categories = new Map<number, string>();
   let note = "";
   try {
     const plan = await planHorizons(env, tasks, friendlyDate(now, env.TIMEZONE), labels);
     assignments = sanitizePlan(plan, tasks);
+    categories = suggestedCategories(plan, tasks);
     note = plan.note;
   } catch (err) {
     console.error("planHorizons failed, using rules", err);
@@ -207,6 +216,11 @@ async function finishCheckin(env: Env, state: CheckinState): Promise<string> {
     if (horizon && horizon !== task.horizon) {
       await updateTask(env.DB, task.id, { horizon });
       task.horizon = horizon;
+    }
+    const category = categories.get(task.id);
+    if (category) {
+      await updateTask(env.DB, task.id, { category });
+      task.category = (await getTask(env.DB, task.id))?.category ?? task.category;
     }
   }
 

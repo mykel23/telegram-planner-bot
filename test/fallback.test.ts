@@ -14,6 +14,9 @@ const task = (id: number, title: string, rank = 3, extra: Partial<Task> = {}): T
   status: "open",
   preferred_date: null,
   due_date: null,
+  category: null,
+  rollovers: 0,
+  recurring_id: null,
   ...extra,
 });
 
@@ -37,7 +40,7 @@ describe("findTask", () => {
 describe("interpretWithRules", () => {
   it("parses add with a list and rank", () => {
     const result = interpretWithRules("add Email Sarah today, rank 1", tasks);
-    expect(result.actions).toEqual([
+    expect(result.actions).toMatchObject([
       { type: "add", title: "Email Sarah", horizon: "day", rank: 1, task_id: null, preferred_date: null, due_date: null },
     ]);
   });

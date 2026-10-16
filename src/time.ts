@@ -200,3 +200,52 @@ export function parseDayAnswer(text: string, fromIso: string, weekdayFromIso: st
   if (year == null && candidate < from.getTime()) candidate = Date.UTC(++y, month, day);
   return { kind: "date", date: isoDate(candidate) };
 }
+
+/** 0 = Sunday ... 6 = Saturday, for a YYYY-MM-DD date. */
+export function weekdayIndex(iso: string): number {
+  return new Date(parseIso(iso)).getUTCDay();
+}
+
+/** Last day of the month that `iso` falls in, as a day number (28-31). */
+export function daysInMonth(iso: string): number {
+  const t = new Date(parseIso(iso));
+  return new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + 1, 0)).getUTCDate();
+}
+
+/**
+ * The UTC instant for a wall-clock time in a time zone, e.g. 2:00 PM on
+ * 2026-10-16 in America/Chicago. Daylight saving is handled by measuring
+ * the zone's offset at that moment.
+ */
+export function zonedTimeToUtc(dateIso: string, hour: number, minute: number, timeZone: string): Date {
+  const [y, m, d] = dateIso.split("-").map(Number);
+  const wanted = Date.UTC(y, m - 1, d, hour, minute);
+  let guess = wanted;
+  for (let i = 0; i < 2; i++) {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(new Date(guess));
+    const get = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((p) => p.type === type)?.value);
+    const shown = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"));
+    guess += wanted - shown;
+  }
+  return new Date(guess);
+}
+
+/** "Fri 10/16, 2:00 PM" in the owner's time zone. */
+export function friendlyDateTime(when: Date, timeZone: string): string {
+  const { date } = localTime(when, timeZone);
+  const clock = new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit" }).format(when);
+  return `${shortDate(date)}, ${clock}`;
+}
+
+/** "2:05 PM" in the owner's time zone. */
+export function clockTime(when: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit" }).format(when);
+}

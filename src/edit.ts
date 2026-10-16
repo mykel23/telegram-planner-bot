@@ -15,15 +15,25 @@ import { parseDayAnswer, periodLabels, shortDate } from "./time";
 
 const STATE_KEY = "edit";
 
-export type EditField = "rank" | "preferred" | "due" | "title" | "horizon";
+export type EditField = "rank" | "preferred" | "due" | "title" | "horizon" | "category";
 
-const FIELDS: { field: EditField; label: string }[] = [
+/** The labels double as the button text, so a tapped button reads as its label. */
+export const FIELDS: { field: EditField; label: string }[] = [
   { field: "rank", label: "Rank" },
   { field: "preferred", label: "Preferred day" },
   { field: "due", label: "Latest day" },
   { field: "title", label: "Name" },
-  { field: "horizon", label: "List (day, week or month)" },
+  { field: "horizon", label: "List" },
+  { field: "category", label: "Category" },
 ];
+
+/** Reads "3", "3. Name" or "Name" as a field choice. */
+export function parseFieldChoice(text: string): EditField | null {
+  const t = text.trim().toLowerCase();
+  const n = t.match(/^(\d+)\b/);
+  if (n) return FIELDS[Number(n[1]) - 1]?.field ?? null;
+  return FIELDS.find((f) => f.label.toLowerCase() === t)?.field ?? null;
+}
 
 export interface EditState {
   stage: "pick" | "field" | "value";
@@ -51,7 +61,7 @@ function fieldMenu(task: Task, todayIso: string): string {
     `Editing:\n${formatTaskLine(task, 1, todayIso).replace(/^1\. /, "")}\n\n` +
     `What do you want to change?\n` +
     FIELDS.map((f, i) => `${i + 1}. ${f.label}`).join("\n") +
-    `\n\nReply with a number, or <b>done</b>.`
+    `\n\nTap one (or reply with its number), or <b>done</b>.`
   );
 }
 
@@ -68,6 +78,8 @@ function valueQuestion(field: EditField, task: Task): string {
       return `What should ${title} be called instead?`;
     case "horizon":
       return `Which list should ${title} be on? Reply <b>day</b>, <b>week</b> or <b>month</b>.`;
+    case "category":
+      return `Which category should ${title} be in? Reply with one word ("Work", "Health"), or "none" to clear it.`;
   }
 }
 
@@ -117,10 +129,10 @@ export async function handleEditReply(env: Env, state: EditState, text: string):
       await cancelEdit(env);
       return "👍 All set.";
     }
-    const choice = FIELDS[Number(reply) - 1];
+    const choice = parseFieldChoice(reply);
     if (!choice) return `Please reply with a number from 1 to ${FIELDS.length}, or <b>done</b>.`;
-    await saveEdit(env, { ...state, stage: "value", field: choice.field });
-    return valueQuestion(choice.field, task);
+    await saveEdit(env, { ...state, stage: "value", field: choice });
+    return valueQuestion(choice, task);
   }
 
   // stage === "value"
@@ -161,6 +173,14 @@ export async function handleEditReply(env: Env, state: EditState, text: string):
       if (!reply || reply.startsWith("/")) return valueQuestion(field, task);
       await updateTask(env.DB, task.id, { title: reply });
       change = `renamed to <b>${escapeHtml(reply)}</b>`;
+      break;
+    }
+    case "category": {
+      if (!reply || reply.startsWith("/")) return valueQuestion(field, task);
+      const clear = /^(none|no|clear|remove|-)$/i.test(reply);
+      await updateTask(env.DB, task.id, { category: clear ? null : reply.split(/\s+/)[0] });
+      const updated = await getTask(env.DB, task.id);
+      change = updated?.category ? `category ${escapeHtml(updated.category)}` : "category cleared";
       break;
     }
     case "horizon": {

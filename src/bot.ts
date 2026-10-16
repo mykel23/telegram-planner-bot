@@ -2,12 +2,38 @@ import { cancelCheckin, getCheckin, handleCheckinReply, startCheckin } from "./c
 import { type Action, type Interpretation, interpretMessage } from "./claude";
 import { cancelEdit, getEdit, handleEditReply, startEdit } from "./edit";
 import { cancelReview, getReview, handleReviewReply, startReview } from "./review";
-import { addTask, clampRank, deleteTask, getState, listActiveTasks, setState, updateTask } from "./db";
+import {
+  addTask,
+  clampRank,
+  deleteRecurring,
+  deleteReminder,
+  deleteTask,
+  getState,
+  listActiveTasks,
+  listCategories,
+  listRecurring,
+  listUpcomingReminders,
+  openTasksFromRecurring,
+  setState,
+  updateTask,
+} from "./db";
 import type { Env, Horizon, Task } from "./env";
-import { HELP_TEXT, escapeHtml, formatAllLists, formatDailyMessage, formatList, horizonLabel } from "./format";
+import {
+  HELP_TEXT,
+  escapeHtml,
+  formatAllLists,
+  formatCategory,
+  formatDailyMessage,
+  formatList,
+  horizonLabel,
+} from "./format";
 import { interpretWithRules } from "./fallback";
+import { keyboardFor } from "./keyboard";
+import { createRepeat, formatRepeats, ruleFromFields } from "./recurring";
+import { createReminder, formatReminders } from "./reminders";
 import { sendMessage, type TelegramUpdate } from "./telegram";
-import { friendlyDate, periodLabels, shortDate } from "./time";
+import { clockTime, friendlyDate, periodLabels, shortDate, zonedTimeToUtc } from "./time";
+import { MAX_VOICE_SECONDS, transcribeVoice } from "./voice";
 
 /** Only accept real YYYY-MM-DD dates from Claude. */
 function validDate(value: string | null | undefined): string | null {
@@ -30,14 +56,15 @@ export const OWNER_KEY = "owner_chat_id";
  */
 export async function handleUpdate(env: Env, update: TelegramUpdate): Promise<void> {
   const message = update.message;
-  const text = message?.text?.trim();
-  if (!message || !text || message.chat.type !== "private") return;
+  if (!message || message.chat.type !== "private") return;
+  let text = message.text?.trim();
+  if (!text && !message.voice) return;
 
   const chatId = message.chat.id;
   const owner = await getState(env.DB, OWNER_KEY);
 
   if (!owner) {
-    if (text.startsWith("/start")) {
+    if (text?.startsWith("/start")) {
       await setState(env.DB, OWNER_KEY, String(chatId));
       await sendMessage(
         env,
@@ -52,8 +79,28 @@ export async function handleUpdate(env: Env, update: TelegramUpdate): Promise<vo
   }
   if (owner !== String(chatId)) return;
 
-  const reply = await respond(env, text);
-  if (reply) await sendMessage(env, chatId, reply);
+  let heard = "";
+  if (!text && message.voice) {
+    if (message.voice.duration > MAX_VOICE_SECONDS) {
+      await sendMessage(env, chatId, `🎙 That voice note is a bit long. Please keep it under ${MAX_VOICE_SECONDS / 60} minutes.`);
+      return;
+    }
+    try {
+      text = await transcribeVoice(env, message.voice.file_id);
+    } catch (err) {
+      console.error("transcribeVoice failed", err);
+      await sendMessage(env, chatId, "🎙 Sorry, I couldn't make out that voice note. Please try again or type it.");
+      return;
+    }
+    if (!text) {
+      await sendMessage(env, chatId, "🎙 I couldn't hear anything in that voice note. Please try again.");
+      return;
+    }
+    heard = `🎙 <i>“${escapeHtml(text)}”</i>\n\n`;
+  }
+
+  const reply = await respond(env, text!);
+  if (reply) await sendMessage(env, chatId, heard + reply, await keyboardFor(env));
 }
 
 /** Works out the reply to one message from the owner. */
@@ -87,6 +134,16 @@ export async function respond(env: Env, text: string): Promise<string> {
       if (await getCheckin(env)) return "Finish the check-in first, or send /cancel to stop it.";
       await cancelEdit(env);
       return startReview(env);
+    case "/repeats":
+      return formatRepeats(await listRecurring(env.DB));
+    case "/reminders":
+      return formatReminders(await listUpcomingReminders(env.DB), env.TIMEZONE);
+    case "/categories": {
+      const categories = await listCategories(env.DB);
+      return categories.length
+        ? `🏷 <b>Your categories</b>\n${categories.map((c) => `/${escapeHtml(c.toLowerCase())}`).join("\n")}`
+        : `🏷 No categories yet. Try <code>add dentist, category Health</code>.`;
+    }
     case "/cancel": {
       const [checkinActive, editActive, reviewActive] = await Promise.all([
         getCheckin(env),
@@ -101,6 +158,13 @@ export async function respond(env: Env, text: string): Promise<string> {
     }
   }
 
+  // "/work", "/health": any category in use works as a command.
+  if (command) {
+    const category = (await listCategories(env.DB)).find((c) => `/${c.toLowerCase()}` === command);
+    if (category) return formatCategory(await listActiveTasks(env.DB), category, labels);
+    return `I don't know that command.\n\n${HELP_TEXT}`;
+  }
+
   const checkin = await getCheckin(env);
   if (checkin) return handleCheckinReply(env, checkin, text);
 
@@ -110,20 +174,25 @@ export async function respond(env: Env, text: string): Promise<string> {
   const review = await getReview(env);
   if (review) return handleReviewReply(env, review, text);
 
-  const tasks = await listActiveTasks(env.DB);
+  const [tasks, recurring, reminders] = await Promise.all([
+    listActiveTasks(env.DB),
+    listRecurring(env.DB),
+    listUpcomingReminders(env.DB),
+  ]);
+  const now = new Date();
   let interpretation: Interpretation;
   try {
-    const now = new Date();
-    interpretation = await interpretMessage(
-      env,
-      text,
+    interpretation = await interpretMessage(env, text, {
       tasks,
-      friendlyDate(now, env.TIMEZONE),
-      periodLabels(now, env.TIMEZONE),
-    );
+      recurring,
+      reminders,
+      todayLabel: friendlyDate(now, env.TIMEZONE),
+      clock: clockTime(now, env.TIMEZONE),
+      labels: periodLabels(now, env.TIMEZONE),
+    });
   } catch (err) {
     console.error("interpretMessage failed, using rules", err);
-    interpretation = interpretWithRules(text, tasks);
+    interpretation = interpretWithRules(text, tasks, { recurring, now, timeZone: env.TIMEZONE });
   }
   return applyInterpretation(env, interpretation, tasks);
 }
@@ -151,16 +220,50 @@ async function applyAction(env: Env, action: Action, byId: Map<number, Task>): P
     const task = await addTask(env.DB, action.title, action.horizon ?? "week", clampRank(action.rank), {
       preferred_date: preferred,
       due_date: due,
+      category: action.category,
     });
     byId.set(task.id, task);
-    const dates = datesText(preferred, due);
-    return `➕ Added <b>${escapeHtml(task.title)}</b> to ${horizonLabel(task.horizon)} (rank ${task.rank}${dates ? `, ${dates}` : ""}).`;
+    const details = [`rank ${task.rank}`, task.category ? escapeHtml(task.category) : null, datesText(preferred, due) || null]
+      .filter(Boolean)
+      .join(", ");
+    return `➕ Added <b>${escapeHtml(task.title)}</b> to ${horizonLabel(task.horizon)} (${details}).`;
   }
 
   if (action.type === "show") {
     const fresh = await listActiveTasks(env.DB);
     const labels = periodLabels(new Date(), env.TIMEZONE);
+    if (action.category) return formatCategory(fresh, action.category, labels);
     return action.horizon ? formatList(fresh, action.horizon, labels) : formatAllLists(fresh, labels);
+  }
+
+  if (action.type === "repeat") {
+    const rule = ruleFromFields(action.repeat_days, action.repeat_month_day);
+    if (!action.title?.trim() || !rule) return "🤔 I couldn't tell how often that should repeat. Try \"every Monday\" or \"on the 1st of every month\".";
+    const today = periodLabels(new Date(), env.TIMEZONE).iso.day;
+    return createRepeat(env, action.title, clampRank(action.rank), action.category, rule, today);
+  }
+
+  if (action.type === "stop_repeat") {
+    const rec = (await listRecurring(env.DB)).find((r) => r.id === action.task_id);
+    if (!rec) return "🤔 I couldn't find that repeating task. Send /repeats to see them.";
+    await deleteRecurring(env.DB, rec.id);
+    // Remove the open copy too, so it stops showing up right away.
+    for (const copy of await openTasksFromRecurring(env.DB, rec.id)) await deleteTask(env.DB, copy.id);
+    return `🛑 <b>${escapeHtml(rec.title)}</b> won't repeat anymore.`;
+  }
+
+  if (action.type === "remind") {
+    const m = action.remind_at?.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{1,2}):(\d{2})/);
+    if (!action.title?.trim() || !m) return "🤔 I couldn't work out when to remind you. Try \"remind me to call the bank at 2pm\".";
+    const at = zonedTimeToUtc(m[1], Number(m[2]), Number(m[3]), env.TIMEZONE);
+    return createReminder(env, action.title, at);
+  }
+
+  if (action.type === "cancel_reminder") {
+    const reminder = (await listUpcomingReminders(env.DB)).find((r) => r.id === action.task_id);
+    if (!reminder) return "🤔 I couldn't find that reminder. Send /reminders to see them.";
+    await deleteReminder(env.DB, reminder.id);
+    return `🛑 Cancelled the reminder to <b>${escapeHtml(reminder.text)}</b>.`;
   }
 
   const task = action.task_id != null ? byId.get(action.task_id) : undefined;
@@ -186,6 +289,7 @@ async function applyAction(env: Env, action: Action, byId: Map<number, Task>): P
         rank?: number;
         preferred_date?: string;
         due_date?: string;
+        category?: string;
       } = {};
       if (action.title?.trim()) fields.title = action.title;
       if (action.horizon) fields.horizon = action.horizon;
@@ -194,6 +298,7 @@ async function applyAction(env: Env, action: Action, byId: Map<number, Task>): P
       const due = validDate(action.due_date);
       if (preferred) fields.preferred_date = preferred;
       if (due) fields.due_date = due;
+      if (action.category?.trim()) fields.category = action.category;
       await updateTask(env.DB, task.id, fields);
       const changes = [
         fields.title ? `renamed to <b>${escapeHtml(fields.title.trim())}</b>` : null,
@@ -201,6 +306,7 @@ async function applyAction(env: Env, action: Action, byId: Map<number, Task>): P
         fields.rank != null ? `rank ${fields.rank}` : null,
         preferred ? `do ${shortDate(preferred)}` : null,
         due ? `by ${shortDate(due)}` : null,
+        fields.category ? `category ${escapeHtml(fields.category)}` : null,
       ].filter(Boolean);
       return `✏️ Updated ${title}${changes.length ? `: ${changes.join(", ")}` : ""}.`;
     }

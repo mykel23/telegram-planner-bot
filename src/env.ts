@@ -2,6 +2,8 @@
 export interface Env {
   /** D1 database that stores tasks and bot state. */
   DB: D1Database;
+  /** Workers AI, used to turn voice notes into text. */
+  AI: Ai;
 
   // Secrets (set in the Cloudflare dashboard, never in the repo)
   TELEGRAM_BOT_TOKEN: string;
@@ -34,6 +36,12 @@ export interface Task {
   preferred_date: string | null;
   /** Latest day it can be done, YYYY-MM-DD, or null. */
   due_date: string | null;
+  /** Short label such as "Work", "Personal" or "Health", or null. */
+  category: string | null;
+  /** How many times the evening check-in has pushed this task to a later day. */
+  rollovers: number;
+  /** The repeating task this one was created from, or null. */
+  recurring_id: number | null;
 }
 
 export const HORIZONS: Horizon[] = ["month", "week", "day"];

@@ -1,6 +1,9 @@
 import type { Action, Interpretation } from "./claude";
+import type { Recurring } from "./db";
 import type { Horizon, Task } from "./env";
-import type { PeriodLabels } from "./time";
+import { parseRepeatText, type RepeatRule } from "./recurring";
+import { parseReminderText } from "./reminders";
+import { localTime, type PeriodLabels } from "./time";
 
 /**
  * Rule-based backups for when the Claude API is unreachable.
@@ -16,7 +19,7 @@ function normalize(text: string): string {
 }
 
 /** Finds the active task whose title best matches the query, or null. */
-export function findTask(query: string, tasks: Task[]): Task | null {
+export function findTask<T extends { id: number; title: string }>(query: string, tasks: T[]): T | null {
   const q = normalize(query);
   if (!q) return null;
 
@@ -27,7 +30,7 @@ export function findTask(query: string, tasks: Task[]): Task | null {
   if (exact) return exact;
 
   const qWords = new Set(q.split(" "));
-  let best: Task | null = null;
+  let best: T | null = null;
   let bestScore = 0;
   for (const task of tasks) {
     const title = normalize(task.title);
@@ -52,11 +55,57 @@ function horizonFromText(text: string): Horizon | null {
 }
 
 function action(partial: Partial<Action> & Pick<Action, "type">): Action {
-  return { task_id: null, title: null, horizon: null, rank: null, preferred_date: null, due_date: null, ...partial };
+  return {
+    task_id: null,
+    title: null,
+    horizon: null,
+    rank: null,
+    preferred_date: null,
+    due_date: null,
+    category: null,
+    repeat_days: null,
+    repeat_month_day: null,
+    remind_at: null,
+    ...partial,
+  };
 }
 
-export function interpretWithRules(text: string, tasks: Task[]): Interpretation {
+const DAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
+
+function repeatFields(rule: RepeatRule): Pick<Action, "repeat_days" | "repeat_month_day"> {
+  if (rule.kind === "monthly") return { repeat_days: null, repeat_month_day: rule.day };
+  const days = rule.kind === "daily" ? [0, 1, 2, 3, 4, 5, 6] : rule.days;
+  return { repeat_days: days.map((d) => DAY_KEYS[d]), repeat_month_day: null };
+}
+
+/** "2026-10-16 14:00" in the given time zone. */
+export function localStamp(when: Date, timeZone: string): string {
+  const { date } = localTime(when, timeZone);
+  const clock = new Intl.DateTimeFormat("en-US", { timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(when);
+  return `${date} ${clock}`;
+}
+
+export interface RuleContext {
+  recurring?: Recurring[];
+  now?: Date;
+  timeZone?: string;
+}
+
+export function interpretWithRules(text: string, tasks: Task[], ctx: RuleContext = {}): Interpretation {
   const trimmed = text.trim();
+
+  if (/^remind me\b/i.test(trimmed)) {
+    const reminder = ctx.now && ctx.timeZone ? parseReminderText(trimmed, ctx.now, ctx.timeZone) : null;
+    return reminder
+      ? { actions: [action({ type: "remind", title: reminder.text, remind_at: localStamp(reminder.at, ctx.timeZone!) })], reply: "" }
+      : { actions: [], reply: `I couldn't work out the time. Try "remind me to call the bank at 2pm".` };
+  }
+
+  const stop = trimmed.match(/^(?:stop repeating|stop|no more)\s+(.+)$/i);
+  if (stop && ctx.recurring?.length) {
+    const rec = findTask(stop[1], ctx.recurring);
+    if (rec) return { actions: [action({ type: "stop_repeat", task_id: rec.id })], reply: "" };
+  }
 
   const add = trimmed.match(/^(?:add|todo|new task)[:\s]+(.+)$/i);
   if (add) {
@@ -64,10 +113,12 @@ export function interpretWithRules(text: string, tasks: Task[]): Interpretation 
     const horizon = horizonFromText(title);
     const rankMatch = title.match(/,?\s*rank\s*([1-5])\b/i);
     const rank = rankMatch ? Number(rankMatch[1]) : null;
-    title = title
-      .replace(/,?\s*rank\s*[1-5]\b/i, "")
-      .replace(/,?\s*\b(today|tonight|this week|this month)\b\s*$/i, "")
-      .trim();
+    title = title.replace(/,?\s*rank\s*[1-5]\b/i, "").trim();
+    const repeat = parseRepeatText(title);
+    if (repeat) {
+      return { actions: [action({ type: "repeat", title: repeat.rest, rank, ...repeatFields(repeat.rule) })], reply: "" };
+    }
+    title = title.replace(/,?\s*\b(today|tonight|this week|this month)\b\s*$/i, "").trim();
     return { actions: [action({ type: "add", title, horizon, rank })], reply: "" };
   }
 

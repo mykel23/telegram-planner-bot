@@ -5,7 +5,7 @@ import { periodLabels } from "../src/time";
 
 // Friday Oct 16, 7 AM Central
 const labels = periodLabels(new Date("2026-10-16T12:00:00Z"), "America/Chicago");
-const none = { preferred_date: null, due_date: null };
+const none = { preferred_date: null, due_date: null, category: null, rollovers: 0, recurring_id: null };
 
 const tasks: Task[] = [
   { id: 1, title: "Finish <deck>", horizon: "day", rank: 1, status: "doing", ...none },
@@ -44,7 +44,7 @@ describe("formatAllLists", () => {
 });
 
 describe("dates", () => {
-  const base: Task = { id: 9, title: "Report", horizon: "month", rank: 3, status: "open", preferred_date: null, due_date: null };
+  const base: Task = { id: 9, title: "Report", horizon: "month", rank: 3, status: "open", preferred_date: null, due_date: null, category: null, rollovers: 0, recurring_id: null };
 
   it("moves a task to Day when it is preferred or due today, or overdue", () => {
     expect(effectiveHorizon({ ...base, preferred_date: "2026-10-16" }, labels)).toBe("day");

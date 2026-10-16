@@ -6,11 +6,12 @@ name = "telegram-planner-bot"
 main = "src/index.ts"
 compatibility_date = "2026-10-01"
 
-# Runs every hour on the hour (UTC). The code converts to your time zone and
-# decides whether it is time for the daily message or the weekly check-in,
-# so daylight saving changes are handled automatically.
+# Runs every minute (UTC), so reminders arrive on time. The code converts to
+# your time zone and decides whether it is time for a reminder, the morning
+# message, the evening check-in or the weekly check-in, so daylight saving
+# changes are handled automatically.
 [triggers]
-crons = ["0 * * * *"]
+crons = ["* * * * *"]
 
 [vars]
 TIMEZONE = "America/Chicago"
@@ -24,6 +25,10 @@ CLAUDE_MODEL = "claude-haiku-5-5"
 binding = "DB"
 database_name = "planner-db"
 database_id = "bb95ccb3-1ddb-40d9-acb5-b705be701f55"
+
+# Workers AI turns voice notes into text (Whisper). Free tier covers personal use.
+[ai]
+binding = "AI"
 
 [observability]
 enabled = true

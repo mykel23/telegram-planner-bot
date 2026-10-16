@@ -18,6 +18,12 @@ To-do apps wait for you to open them. I wanted a planner that comes to me: a sho
 | **Every evening (8:00 PM)** | The bot goes through today's list one task at a time and asks if it got done. I reply yes, no (it rolls over to tomorrow), a new day, or drop. |
 | **Weekly check-in (Sunday 6:00 PM)** | Plans the Monday-to-Sunday week ahead. The bot asks what I need to get done this week or month. For each task it asks for a rank from 1 to 5, the day I'd like to do it, and the latest day it can be done. Then it sends my month, week and day lists, with dates. |
 | **Anytime** | I text it in plain English: "add renew passport this month", "done with the bank", "working on the deck", "what's on today?" |
+| **Voice notes** | I can send a voice note instead of typing. The bot transcribes it and treats it like a text. |
+| **Reminders** | "Remind me to call the bank at 2pm" sends a nudge at exactly that time. |
+| **Repeating tasks** | "Add gym every Mon, Wed and Fri" or "pay rent on the 1st of every month" come back on their own. A missed one is replaced by the next, so they never pile up. |
+| **Stuck tasks** | If a task gets pushed back three times, the bot asks whether to split it into smaller steps, move it to the month list, drop it or keep it. |
+| **Categories** | Tasks can be tagged Work, Personal, Health and so on, and `/work` shows just that category. The bot suggests categories on its own. |
+| **Buttons** | Check-ins and edits show tap buttons (Done, Tomorrow, Drop, ranks, weekdays), so most answers are one tap. |
 
 ## Demo
 
@@ -30,20 +36,23 @@ flowchart LR
     Me["📱 Me in Telegram"] <-->|messages| TG["Telegram Bot API"]
     TG -->|webhook| W["Cloudflare Worker"]
     W -->|replies| TG
-    Cron["⏰ Cron trigger<br/>every hour"] --> W
+    Cron["⏰ Cron["⏰ Cron trigger<br/>every minute"]trigger<br/>every hour"] --> W
     W <-->|tasks, ranks, status| DB[("Cloudflare D1")]
     W -->|"understand messages,<br/>build weekly lists"| C["Claude API"]
+    W -->|voice notes| AI["Workers AI<br/>(Whisper)"]
 ```
 
 - **Telegram → Worker:** Telegram delivers each message to the Worker's `/telegram` webhook. A secret header proves the request really came from Telegram.
-- **Cron → Worker:** Cloudflare runs the Worker every hour. The code converts the time to my time zone and sends the morning message, the evening check-in or the weekly check-in when each is due. This keeps 7:00 AM at 7:00 AM through daylight saving changes, which a fixed UTC cron can't do.
+- **Cron["⏰ Cron trigger<br/>every minute"]→ Worker:** Cloudflare runs the Worker every minute. The code converts the time to my time zone and sends reminders, adds the day's repeating tasks, and sends the morning message, the evening check-in or the weekly check-in when each is due. This keeps 7:00 AM at 7:00 AM through daylight saving changes, which a fixed UTC cron can't do.
 - **Worker → Claude:** Claude turns free-form messages into structured actions (add, done, start, update, remove, show) and sorts tasks into month, week and day lists after the check-in. Both calls use [structured outputs](https://docs.claude.com/en/docs/build-with-claude/structured-outputs), so the bot always gets valid JSON back.
-- **Worker → D1:** Tasks, ranks, status and the check-in's progress are stored in a SQLite database, so nothing is lost when the Worker restarts or redeploys.
+- **Worker → Workers AI:** Voice notes are downloaded from Telegram and transcribed with Whisper on Cloudflare's own AI service, then handled like a typed message.
+- **Worker → D1:** Tasks, ranks, status, repeating tasks, reminders and the check-in's progress are stored in a SQLite database, so nothing is lost when the Worker restarts or redeploys.
 
 ### Design decisions
 
 - **It keeps working if Claude is down.** If a Claude call fails, simple built-in rules handle `add`, `done`, `working on` and `what's on today?`, and the weekly lists fall back to rank-based sorting.
-- **Scheduled messages retry themselves.** A message is marked "sent" only after Telegram accepts it. If a send fails, the next hourly run tries again, within a two-hour window.
+- **Scheduled messages retry themselves.** A message is marked "sent" only after Telegram accepts it. If a send fails, the next run tries again, within a two-hour window. Each scheduled job runs on its own, so one failing never blocks the others.
+- **Buttons are just text.** Every button sends words the bot already understands, so typing the answer works just as well as tapping.
 - **Only I can use it.** The first person to send `/start` becomes the owner, and the bot ignores everyone else.
 - **No secrets in the repo.** The bot token, API key and webhook secret live in Cloudflare's encrypted secrets. `wrangler.toml` holds only non-secret settings.
 - **Low cost.** Claude Haiku handles the language work, and the daily message is built without an AI call at all.
@@ -53,6 +62,7 @@ flowchart LR
 | Service | Monthly cost |
 |---|---|
 | Cloudflare Workers, cron triggers, D1 (free plan) | $0 |
+| Workers AI voice transcription (free daily allowance) | $0 |
 | Telegram Bot API | $0 |
 | Claude API (Haiku, about 30 daily messages, 4 check-ins and a few replies a day) | well under $1 |
 | **Total** | **under $1** |
@@ -68,8 +78,15 @@ flowchart LR
 | `move the deck to this month` / `make the deck rank 2` | Changes a task's list or rank |
 | `the deck is due Friday` / `I'd like to do the deck Wednesday` | Sets a task's latest day or preferred day |
 | `what's on today?` | Shows today's list |
+| `add gym every Mon, Wed and Fri` | Adds a repeating task |
+| `stop repeating gym` | Stops a repeating task |
+| `remind me to call the bank at 2pm` / `remind me in 20 minutes to stretch` | Sets a reminder |
+| `add dentist, category Health` | Adds a task with a category |
+| 🎙 a voice note | Works like typing the same words |
+| `/repeats` `/reminders` `/categories` | Shows repeating tasks, upcoming reminders or categories |
+| `/work`, `/health`, … | Shows one category's tasks |
 | `/today` `/week` `/month` `/lists` | Shows lists |
-| `/edit` | Guided edit: pick a task by number, then change its rank, preferred day, latest day, name or list |
+| `/edit` | Guided edit: pick a task by number, then change its rank, preferred day, latest day, name, list or category |
 | `/checkin` | Starts the weekly check-in now |
 | `/daily` | Sends the morning message now |
 | `/review` | Starts the evening check-in now |

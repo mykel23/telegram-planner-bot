@@ -19,6 +19,21 @@ const SCHEMA = [
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS recurring (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    rank INTEGER NOT NULL DEFAULT 3,
+    category TEXT,
+    rule TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS reminders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    text TEXT NOT NULL,
+    remind_at TEXT NOT NULL,
+    sent INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
   `CREATE TABLE IF NOT EXISTS sends (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL,
@@ -31,6 +46,9 @@ const SCHEMA = [
 const ADDED_TASK_COLUMNS: Record<string, string> = {
   preferred_date: "TEXT",
   due_date: "TEXT",
+  category: "TEXT",
+  rollovers: "INTEGER NOT NULL DEFAULT 0",
+  recurring_id: "INTEGER",
 };
 
 let schemaReady = false;
@@ -46,11 +64,18 @@ export async function ensureSchema(db: D1Database): Promise<void> {
   schemaReady = true;
 }
 
-const TASK_COLUMNS = "id, title, horizon, rank, status, preferred_date, due_date";
+const TASK_COLUMNS = "id, title, horizon, rank, status, preferred_date, due_date, category, rollovers, recurring_id";
 
 export function clampRank(rank: number | null | undefined, fallback = 3): number {
   if (rank == null || !Number.isFinite(rank)) return fallback;
   return Math.min(5, Math.max(1, Math.round(rank)));
+}
+
+/** "work" and "WORK" become "Work"; blank becomes null. */
+export function normalizeCategory(category: string | null | undefined): string | null {
+  const c = category?.trim().replace(/^#/, "");
+  if (!c) return null;
+  return c.charAt(0).toUpperCase() + c.slice(1).toLowerCase();
 }
 
 // ---------- tasks ----------
@@ -76,14 +101,28 @@ export async function addTask(
   title: string,
   horizon: Horizon,
   rank: number,
-  dates: { preferred_date?: string | null; due_date?: string | null } = {},
+  extra: {
+    preferred_date?: string | null;
+    due_date?: string | null;
+    category?: string | null;
+    recurring_id?: number | null;
+  } = {},
 ): Promise<Task> {
   const row = await db
     .prepare(
-      `INSERT INTO tasks (title, horizon, rank, preferred_date, due_date) VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO tasks (title, horizon, rank, preferred_date, due_date, category, recurring_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        RETURNING ${TASK_COLUMNS}`,
     )
-    .bind(title.trim(), horizon, clampRank(rank), dates.preferred_date ?? null, dates.due_date ?? null)
+    .bind(
+      title.trim(),
+      horizon,
+      clampRank(rank),
+      extra.preferred_date ?? null,
+      extra.due_date ?? null,
+      normalizeCategory(extra.category),
+      extra.recurring_id ?? null,
+    )
     .first<Task>();
   if (!row) throw new Error("Insert returned no row");
   return row;
@@ -99,6 +138,8 @@ export async function updateTask(
     status?: Status;
     preferred_date?: string | null;
     due_date?: string | null;
+    category?: string | null;
+    rollovers?: number;
   },
 ): Promise<void> {
   const sets: string[] = [];
@@ -123,6 +164,14 @@ export async function updateTask(
     sets.push("due_date = ?");
     values.push(fields.due_date);
   }
+  if (fields.category !== undefined) {
+    sets.push("category = ?");
+    values.push(normalizeCategory(fields.category));
+  }
+  if (fields.rollovers != null) {
+    sets.push("rollovers = ?");
+    values.push(fields.rollovers);
+  }
   if (fields.status) {
     sets.push("status = ?");
     values.push(fields.status);
@@ -138,6 +187,102 @@ export async function updateTask(
 
 export async function deleteTask(db: D1Database, id: number): Promise<void> {
   await db.prepare(`DELETE FROM tasks WHERE id = ?`).bind(id).run();
+}
+
+/** Distinct categories in use on active tasks, alphabetical. */
+export async function listCategories(db: D1Database): Promise<string[]> {
+  const { results } = await db
+    .prepare(`SELECT DISTINCT category FROM tasks WHERE status != 'done' AND category IS NOT NULL ORDER BY category`)
+    .all<{ category: string }>();
+  return results.map((r) => r.category);
+}
+
+/** Open copies of a repeating task, so a missed one can be replaced by the next. */
+export async function openTasksFromRecurring(db: D1Database, recurringId: number): Promise<Task[]> {
+  const { results } = await db
+    .prepare(`SELECT ${TASK_COLUMNS} FROM tasks WHERE recurring_id = ? AND status != 'done'`)
+    .bind(recurringId)
+    .all<Task>();
+  return results;
+}
+
+// ---------- repeating tasks ----------
+
+export interface Recurring {
+  id: number;
+  title: string;
+  rank: number;
+  category: string | null;
+  /** "daily", "weekly:mon,wed,fri" or "monthly:1". */
+  rule: string;
+}
+
+export async function listRecurring(db: D1Database): Promise<Recurring[]> {
+  const { results } = await db
+    .prepare(`SELECT id, title, rank, category, rule FROM recurring ORDER BY id`)
+    .all<Recurring>();
+  return results;
+}
+
+export async function addRecurring(
+  db: D1Database,
+  title: string,
+  rank: number,
+  category: string | null,
+  rule: string,
+): Promise<Recurring> {
+  const row = await db
+    .prepare(`INSERT INTO recurring (title, rank, category, rule) VALUES (?, ?, ?, ?) RETURNING id, title, rank, category, rule`)
+    .bind(title.trim(), clampRank(rank), normalizeCategory(category), rule)
+    .first<Recurring>();
+  if (!row) throw new Error("Insert returned no row");
+  return row;
+}
+
+export async function deleteRecurring(db: D1Database, id: number): Promise<void> {
+  await db.prepare(`DELETE FROM recurring WHERE id = ?`).bind(id).run();
+}
+
+// ---------- reminders ----------
+
+export interface Reminder {
+  id: number;
+  text: string;
+  /** UTC time, ISO 8601. */
+  remind_at: string;
+}
+
+export async function addReminder(db: D1Database, text: string, remindAt: Date): Promise<Reminder> {
+  const row = await db
+    .prepare(`INSERT INTO reminders (text, remind_at) VALUES (?, ?) RETURNING id, text, remind_at`)
+    .bind(text.trim(), remindAt.toISOString())
+    .first<Reminder>();
+  if (!row) throw new Error("Insert returned no row");
+  return row;
+}
+
+export async function listUpcomingReminders(db: D1Database): Promise<Reminder[]> {
+  const { results } = await db
+    .prepare(`SELECT id, text, remind_at FROM reminders WHERE sent = 0 ORDER BY remind_at`)
+    .all<Reminder>();
+  return results;
+}
+
+/** Reminders whose time has come. ISO strings in UTC sort in time order. */
+export async function dueReminders(db: D1Database, now: Date): Promise<Reminder[]> {
+  const { results } = await db
+    .prepare(`SELECT id, text, remind_at FROM reminders WHERE sent = 0 AND remind_at <= ? ORDER BY remind_at`)
+    .bind(now.toISOString())
+    .all<Reminder>();
+  return results;
+}
+
+export async function markReminderSent(db: D1Database, id: number): Promise<void> {
+  await db.prepare(`UPDATE reminders SET sent = 1 WHERE id = ?`).bind(id).run();
+}
+
+export async function deleteReminder(db: D1Database, id: number): Promise<void> {
+  await db.prepare(`DELETE FROM reminders WHERE id = ?`).bind(id).run();
 }
 
 // ---------- key/value state ----------
