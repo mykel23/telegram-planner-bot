@@ -78,6 +78,26 @@ export async function allStores(env: Env): Promise<string[]> {
   return [...saved, ...nearby.filter((n) => !saved.some((s) => same(s, n)))];
 }
 
+const USES_KEY = "grocery_store_uses";
+
+/** Store name (lowercase) -> how many lists have been made for it. */
+function getUses(env: Env): Promise<Record<string, number>> {
+  return readJson<Record<string, number>>(env, USES_KEY, {});
+}
+
+/** Stores in the order to show them: most-used first, then the rest as they were. */
+export function rankStores(stores: string[], uses: Record<string, number>): string[] {
+  const count = (s: string) => uses[s.toLowerCase()] ?? 0;
+  return stores
+    .map((s, i) => ({ s, i }))
+    .sort((a, b) => count(b.s) - count(a.s) || a.i - b.i)
+    .map(({ s }) => s);
+}
+
+export async function rankedStores(env: Env): Promise<string[]> {
+  return rankStores(await allStores(env), await getUses(env));
+}
+
 // ---------- stores near a ZIP code ----------
 
 export interface Area {
@@ -288,6 +308,12 @@ const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLow
 /** Adds items to the list under a store and remembers them for that store. */
 export async function addItems(env: Env, items: string[], store: string | null): Promise<Grocery[]> {
   if (items.length === 0) return [];
+  // A new list for a store (nothing on it yet) counts as one more use of that store.
+  if (store !== null && !(await listGroceries(env.DB)).some((g) => g.store === store)) {
+    const uses = await getUses(env);
+    uses[store.toLowerCase()] = (uses[store.toLowerCase()] ?? 0) + 1;
+    await setState(env.DB, USES_KEY, JSON.stringify(uses));
+  }
   await addGroceries(env.DB, items, store);
   const history = await getHistory(env);
   const past = history[historyKey(store)] ?? [];
@@ -377,8 +403,11 @@ export interface GroceryReply {
  * more, or add a new store. Items on the list get a ✅ to check off.
  */
 export async function groceryView(env: Env): Promise<GroceryReply> {
-  const [items, stores, area] = [await listGroceries(env.DB), await allStores(env), await getArea(env)];
-  const storeButtons = pairs(stores.slice(0, 16).map((s, i) => ({ text: `🏪 ${s.slice(0, 24)}`, data: `gs:${i}` })));
+  const [items, stores, ranked, area] = [await listGroceries(env.DB), await allStores(env), await rankedStores(env), await getArea(env)];
+  // Shown most-used first; each button keeps the store's fixed position as its id.
+  const storeButtons = pairs(
+    ranked.slice(0, 16).map((s) => ({ text: `🏪 ${s.slice(0, 24)}`, data: `gs:${stores.indexOf(s)}` })),
+  );
   const extras: InlineButton[][] = [
     [{ text: "➕ Add a store", data: "gnew" }, { text: area ? "📍 Change ZIP" : "📍 Stores near me", data: "gzip" }],
     ...(area ? [[{ text: `🗑 Remove ZIP ${area.zip}`, data: "gzipdel" }]] : []),

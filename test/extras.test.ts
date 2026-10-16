@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { interpretWithRules } from "../src/fallback";
-import { addedText, areaFromZipResponse, isKnownChain, parseZip, photonToOsm, splitGroceryItems, storeQuestion, storeRows, storesFromOsm } from "../src/grocery";
+import { addedText, areaFromZipResponse, isKnownChain, parseZip, rankStores, photonToOsm, splitGroceryItems, storeQuestion, storeRows, storesFromOsm } from "../src/grocery";
 import { finishButtons } from "../src/views";
 import { describeWeather, weatherLine } from "../src/weather";
 import type { Task } from "../src/env";
@@ -104,6 +104,14 @@ describe("stores near a ZIP code", () => {
       ],
     };
     expect(storesFromOsm(photonToOsm(photon), 41.8858, -87.6181, 10)).toEqual(["Aldi"]);
+  });
+});
+
+describe("store order", () => {
+  it("puts the most-used stores first", () => {
+    const stores = ["Kroger", "Sprouts", "Aldi", "Costco"];
+    expect(rankStores(stores, { sprouts: 5, kroger: 2, costco: 1 })).toEqual(["Sprouts", "Kroger", "Costco", "Aldi"]);
+    expect(rankStores(stores, {})).toEqual(stores);
   });
 });
 
