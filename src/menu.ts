@@ -16,7 +16,7 @@ export const MENU: [label: string, command: string][][] = [
     ["🗂 All lists", "/lists"],
   ],
   [
-    ["➕ Add task", "/add"],
+    ["📝 Add task", "/add"],
     ["✏️ Edit", "/edit"],
     ["🌙 Review day", "/review"],
   ],
@@ -42,7 +42,10 @@ const BY_LABEL = new Map(MENU.flat().map(([label, command]) => [label, command])
 
 /** The command for a tapped menu button, or null if the text isn't one. */
 export function menuCommand(text: string): string | null {
-  return BY_LABEL.get(text.trim()) ?? null;
+  const label = text.trim();
+  // Older menus still on the phone used "➕ Add task".
+  if (label === "➕ Add task") return "/add";
+  return BY_LABEL.get(label) ?? null;
 }
 
 /** "Good evening 👋" plus a one-line status, for /menu and /start. */
