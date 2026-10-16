@@ -1,0 +1,23 @@
+{
+  "name": "telegram-planner-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A personal Telegram planning bot on Cloudflare Workers, powered by Claude.",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --test-scheduled",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.135.0",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261016.1",
+    "typescript": "^5.9.0",
+    "vitest": "^5.0.5",
+    "wrangler": "^4.151.0"
+  }
+}
