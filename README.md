@@ -34,7 +34,11 @@ To-do apps wait for you to open them. I wanted a planner that comes to me: a sho
 
 ## Demo
 
-> Screenshots and a short GIF of the bot in action will be added after launch (see the [launch milestone](https://github.com/mykel23/telegram-planner-bot/milestones)).
+<img src="docs/images/morning-message.jpg" alt="The 7 AM good morning message: the week's dates, the weather, today's ranked to-do list and what's coming up later this week, with the button menu below" width="300">
+
+*The 7 AM good morning message, with the home menu underneath. Personal details are blurred.*
+
+> More screenshots and a short GIF will be added after launch (see the [launch milestone](https://github.com/mykel23/telegram-planner-bot/milestones)).
 
 ## Architecture
 
