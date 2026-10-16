@@ -5,7 +5,7 @@ import type { Env, Horizon, Task } from "./env";
 import { HELP_TEXT, escapeHtml, formatAllLists, formatDailyMessage, formatList, horizonLabel } from "./format";
 import { interpretWithRules } from "./fallback";
 import { sendMessage, type TelegramUpdate } from "./telegram";
-import { friendlyDate } from "./time";
+import { friendlyDate, periodLabels } from "./time";
 
 export const OWNER_KEY = "owner_chat_id";
 
@@ -45,22 +45,23 @@ export async function handleUpdate(env: Env, update: TelegramUpdate): Promise<vo
 /** Works out the reply to one message from the owner. */
 export async function respond(env: Env, text: string): Promise<string> {
   const command = text.startsWith("/") ? text.split(/[\s@]/)[0].toLowerCase() : null;
+  const labels = periodLabels(new Date(), env.TIMEZONE);
 
   switch (command) {
     case "/start":
     case "/help":
       return HELP_TEXT;
     case "/today":
-      return formatList(await listActiveTasks(env.DB), "day");
+      return formatList(await listActiveTasks(env.DB), "day", labels);
     case "/week":
-      return formatList(await listActiveTasks(env.DB), "week");
+      return formatList(await listActiveTasks(env.DB), "week", labels);
     case "/month":
-      return formatList(await listActiveTasks(env.DB), "month");
+      return formatList(await listActiveTasks(env.DB), "month", labels);
     case "/lists":
     case "/all":
-      return formatAllLists(await listActiveTasks(env.DB));
+      return formatAllLists(await listActiveTasks(env.DB), labels);
     case "/daily":
-      return formatDailyMessage(await listActiveTasks(env.DB), friendlyDate(new Date(), env.TIMEZONE));
+      return formatDailyMessage(await listActiveTasks(env.DB), friendlyDate(new Date(), env.TIMEZONE), labels);
     case "/checkin":
       return startCheckin(env);
     case "/cancel": {
@@ -109,7 +110,8 @@ async function applyAction(env: Env, action: Action, byId: Map<number, Task>): P
 
   if (action.type === "show") {
     const fresh = await listActiveTasks(env.DB);
-    return action.horizon ? formatList(fresh, action.horizon) : formatAllLists(fresh);
+    const labels = periodLabels(new Date(), env.TIMEZONE);
+    return action.horizon ? formatList(fresh, action.horizon, labels) : formatAllLists(fresh, labels);
   }
 
   const task = action.task_id != null ? byId.get(action.task_id) : undefined;

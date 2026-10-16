@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isDailyDue, isWeeklyDue, localTime } from "../src/time";
+import { isDailyDue, isWeeklyDue, localTime, periodLabels } from "../src/time";
 
 const TZ = "America/Chicago";
 
@@ -79,5 +79,37 @@ describe("a full week of hourly cron runs", () => {
       "2026-11-03 7:00",
       "2026-11-04 7:00",
     ]);
+  });
+});
+
+describe("periodLabels", () => {
+  it("gives the Monday-to-Sunday week and month for a weekday", () => {
+    // Thursday Oct 15, 9 PM Central
+    expect(periodLabels(new Date("2026-10-16T02:00:00Z"), TZ)).toEqual({
+      day: "Thu, Oct 15",
+      week: "Mon, Oct 12 – Sun, Oct 18",
+      month: "October 2026",
+    });
+  });
+
+  it("treats Sunday as the end of the current week", () => {
+    expect(periodLabels(new Date("2026-10-18T23:00:00Z"), TZ).week).toBe("Mon, Oct 12 – Sun, Oct 18");
+  });
+
+  it("looks ahead to next week on Sunday when planning", () => {
+    expect(periodLabels(new Date("2026-10-18T23:00:00Z"), TZ, true)).toEqual({
+      day: "Mon, Oct 19",
+      week: "Mon, Oct 19 – Sun, Oct 25",
+      month: "October 2026",
+    });
+  });
+
+  it("handles a week that crosses months and the daylight saving change", () => {
+    expect(periodLabels(new Date("2026-11-01T23:00:00Z"), TZ, true)).toEqual({
+      day: "Mon, Nov 2",
+      week: "Mon, Nov 2 – Sun, Nov 8",
+      month: "November 2026",
+    });
+    expect(periodLabels(new Date("2026-10-30T15:00:00Z"), TZ).week).toBe("Mon, Oct 26 – Sun, Nov 1");
   });
 });

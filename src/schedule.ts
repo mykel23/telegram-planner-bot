@@ -4,7 +4,7 @@ import { ensureSchema, getState, listActiveTasks, logSend, setState } from "./db
 import type { Env } from "./env";
 import { formatDailyMessage } from "./format";
 import { sendMessage } from "./telegram";
-import { friendlyDate, isDailyDue, isWeeklyDue, localTime } from "./time";
+import { friendlyDate, isDailyDue, isWeeklyDue, localTime, periodLabels } from "./time";
 
 /**
  * Runs every hour from the cron trigger. Sends the morning message and starts
@@ -22,7 +22,7 @@ export async function runSchedule(env: Env, now: Date): Promise<void> {
   const lastDaily = await getState(env.DB, "last_daily_date");
   if (isDailyDue(local, Number(env.DAILY_HOUR), lastDaily)) {
     const tasks = await listActiveTasks(env.DB);
-    await sendMessage(env, owner, formatDailyMessage(tasks, friendlyDate(now, env.TIMEZONE)));
+    await sendMessage(env, owner, formatDailyMessage(tasks, friendlyDate(now, env.TIMEZONE), periodLabels(now, env.TIMEZONE)));
     await setState(env.DB, "last_daily_date", local.date);
     await logSend(env.DB, "daily", local.date);
   }

@@ -3,7 +3,7 @@ import { addTask, clearState, getState, listActiveTasks, setState, updateTask } 
 import type { Env, Horizon } from "./env";
 import { escapeHtml, formatAllLists } from "./format";
 import { planWithRules } from "./fallback";
-import { friendlyDate } from "./time";
+import { friendlyDate, periodLabels } from "./time";
 
 /**
  * The weekly check-in is a small conversation:
@@ -83,6 +83,8 @@ export async function startCheckin(env: Env): Promise<string> {
     : "";
   return (
     `🗓 <b>Weekly check-in</b>\n` +
+    `Planning the week of <b>${escapeHtml(periodLabels(new Date(), env.TIMEZONE, true).week)}</b> ` +
+    `(${escapeHtml(periodLabels(new Date(), env.TIMEZONE, true).month)}).\n\n` +
     `What do you need to get done? Send your tasks one per line, or one per message.\n` +
     `Send <b>done</b> when you've listed everything.` +
     existing
@@ -122,10 +124,12 @@ async function finishCheckin(env: Env, state: CheckinState): Promise<string> {
   }
 
   const tasks = await listActiveTasks(env.DB);
+  const now = new Date();
+  const labels = periodLabels(now, env.TIMEZONE, true);
   let assignments: Map<number, Horizon>;
   let note = "";
   try {
-    const plan = await planHorizons(env, tasks, friendlyDate(new Date(), env.TIMEZONE));
+    const plan = await planHorizons(env, tasks, friendlyDate(now, env.TIMEZONE), labels);
     assignments = sanitizePlan(plan, tasks);
     note = plan.note;
   } catch (err) {
@@ -143,5 +147,5 @@ async function finishCheckin(env: Env, state: CheckinState): Promise<string> {
 
   await cancelCheckin(env);
   const header = `🎯 <b>Your priorities</b>${note ? `\n${escapeHtml(note)}` : ""}`;
-  return `${header}\n\n${formatAllLists(tasks)}`;
+  return `${header}\n\n${formatAllLists(tasks, labels)}`;
 }

@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import type { Env, Horizon, Task } from "./env";
+import type { PeriodLabels } from "./time";
 
 /**
  * Claude does two jobs:
@@ -103,7 +104,7 @@ Weeks run Monday 12:00 AM to Sunday 11:59 PM. The check-in usually happens on Su
 
 Use rank as the main signal (1 is most important). Respect a list the user set on purpose unless rank strongly disagrees. Return an assignment for every task ID you are given and no others.`;
 
-export async function planHorizons(env: Env, tasks: Task[], todayLabel: string): Promise<Plan> {
+export async function planHorizons(env: Env, tasks: Task[], todayLabel: string, labels: PeriodLabels): Promise<Plan> {
   const response = await client(env).messages.parse({
     model: env.CLAUDE_MODEL,
     max_tokens: 4000,
@@ -112,7 +113,7 @@ export async function planHorizons(env: Env, tasks: Task[], todayLabel: string):
     messages: [
       {
         role: "user",
-        content: `Today is ${todayLabel}.\n\nActive tasks (JSON lines):\n${taskSnapshot(tasks)}`,
+        content: `Today is ${todayLabel}. Planning: day = ${labels.day}, week = ${labels.week}, month = ${labels.month}.\n\nActive tasks (JSON lines):\n${taskSnapshot(tasks)}`,
       },
     ],
   });

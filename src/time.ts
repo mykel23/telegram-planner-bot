@@ -68,3 +68,43 @@ export function friendlyDate(now: Date, timeZone: string): string {
     day: "numeric",
   }).format(now);
 }
+
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const DAY_MS = 86_400_000;
+
+/** Date labels for the day, week (Monday to Sunday) and month lists. */
+export interface PeriodLabels {
+  /** "Mon, Oct 19" */
+  day: string;
+  /** "Mon, Oct 19 – Sun, Oct 25" */
+  week: string;
+  /** "October 2026" */
+  month: string;
+}
+
+/**
+ * Weeks run Monday 12:00 AM to Sunday 11:59 PM in the owner's time zone.
+ * With planAhead (used by the weekly check-in), Sunday looks ahead to the
+ * week that starts the next day.
+ */
+export function periodLabels(now: Date, timeZone: string, planAhead = false): PeriodLabels {
+  const { date, weekday } = localTime(now, timeZone);
+  const [y, m, d] = date.split("-").map(Number);
+  // Work on the local calendar date as a UTC timestamp, so daylight saving can't shift it.
+  let day = Date.UTC(y, m - 1, d);
+  let mondayOffset = (WEEKDAYS.indexOf(weekday) + 6) % 7; // Monday = 0 ... Sunday = 6
+  if (planAhead && mondayOffset === 6) {
+    day += DAY_MS;
+    mondayOffset = 0;
+  }
+  const monday = day - mondayOffset * DAY_MS;
+  const sunday = monday + 6 * DAY_MS;
+  const fmt = (t: number, options: Intl.DateTimeFormatOptions) =>
+    new Intl.DateTimeFormat("en-US", { timeZone: "UTC", ...options }).format(new Date(t));
+  const short: Intl.DateTimeFormatOptions = { weekday: "short", month: "short", day: "numeric" };
+  return {
+    day: fmt(day, short),
+    week: `${fmt(monday, short)} – ${fmt(sunday, short)}`,
+    month: fmt(day, { month: "long", year: "numeric" }),
+  };
+}
