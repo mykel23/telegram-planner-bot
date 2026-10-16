@@ -22,7 +22,7 @@ CLAUDE_MODEL = "claude-haiku-5-5"
 [[d1_databases]]
 binding = "DB"
 database_name = "planner-db"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "bb95ccb3-1ddb-40d9-acb5-b705be701f55"
 
 [observability]
 enabled = true
