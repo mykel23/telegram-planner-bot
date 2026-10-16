@@ -132,7 +132,7 @@ function miles(aLat: number, aLon: number, bLat: number, bLon: number): number {
 }
 
 /** Most nearby stores offered as buttons. */
-const MAX_NEARBY = 10;
+const MAX_NEARBY = 12;
 
 /** Grocery store names from an OpenStreetMap search, closest first, one per chain. */
 export function storesFromOsm(data: unknown, lat: number, lon: number, maxMiles = Infinity): string[] {
@@ -142,16 +142,39 @@ export function storesFromOsm(data: unknown, lat: number, lon: number, maxMiles 
       const name = (e.tags?.brand ?? e.tags?.name ?? "").trim();
       const pLat = e.lat ?? e.center?.lat;
       const pLon = e.lon ?? e.center?.lon;
-      return { name, distance: pLat != null && pLon != null ? miles(lat, lon, pLat, pLon) : 99 };
+      const known = isKnownChain(name) || isKnownChain(e.tags?.name ?? "");
+      // Big chains first, then other branded stores, then small local shops.
+      const tier = known ? 0 : e.tags?.brand || e.tags?.["brand:wikidata"] ? 1 : 2;
+      // Department stores only count when they're a grocery chain (Walmart, Target).
+      const grocery = e.tags?.shop !== "department_store" || known;
+      return { name, tier, grocery, distance: pLat != null && pLon != null ? miles(lat, lon, pLat, pLon) : 99 };
     })
-    .filter((s) => s.name.length > 0 && s.name.length <= 30 && s.distance <= maxMiles)
-    .sort((a, b) => a.distance - b.distance);
+    .filter((s) => s.grocery && s.name.length > 0 && s.name.length <= 30 && s.distance <= maxMiles)
+    .sort((a, b) => a.tier - b.tier || a.distance - b.distance);
   const names: string[] = [];
   for (const { name } of found) {
     if (!names.some((n) => same(n, name))) names.push(name);
     if (names.length === MAX_NEARBY) break;
   }
   return names;
+}
+
+/** Grocery chains people usually mean by "the main stores". Matched by the start of the name. */
+const KNOWN_CHAINS = [
+  "kroger", "sprouts", "restaurant depot", "h-e-b", "heb", "walmart", "target", "costco", "sam's club", "aldi",
+  "whole foods", "trader joe", "publix", "safeway", "albertsons", "jewel-osco", "mariano", "meijer", "food lion",
+  "giant", "stop & shop", "wegmans", "hy-vee", "fiesta", "fry's", "ralphs", "king soopers", "smith's", "dillons",
+  "harris teeter", "winco", "food 4 less", "save a lot", "lidl", "vons", "randalls", "tom thumb", "shoprite",
+  "piggly wiggly", "winn-dixie", "bj's", "fresh thyme", "natural grocers", "central market", "el super",
+  "cardenas", "vallarta", "99 ranch", "h mart", "patel brothers", "food city", "ingles", "weis", "hannaford",
+  "market basket", "price chopper", "tops", "acme", "pick 'n save", "festival foods", "cub", "schnucks",
+  "dierbergs", "brookshire", "united supermarkets", "market street", "smart & final", "stater bros", "grocery outlet",
+];
+
+export function isKnownChain(name: string): boolean {
+  const n = name.trim().toLowerCase().replace(/’/g, "'");
+  // The chain name must end at a word break: "Target" matches "Target Grocery", not "Targeted Foods".
+  return KNOWN_CHAINS.some((c) => n.startsWith(c) && !/[a-z0-9]/.test(n.charAt(c.length)));
 }
 
 /** Public Overpass servers, tried in order: the main one is often busy. */
@@ -202,7 +225,7 @@ const NEARBY_METERS = Math.round(NEARBY_MILES * 1609.34);
 export async function findNearbyStores(env: Env, area: Area): Promise<string[]> {
   const query =
     `[out:json][timeout:12];` +
-    `nwr["shop"~"^(supermarket|wholesale|greengrocer)$"](around:${NEARBY_METERS},${area.lat},${area.lon});` +
+    `nwr["shop"~"^(supermarket|wholesale|greengrocer|department_store)$"](around:${NEARBY_METERS},${area.lat},${area.lon});` +
     `out tags center 300;`;
   const errors: string[] = [];
   const attempts = OVERPASS_SERVERS.map(async (server) => {
@@ -349,7 +372,7 @@ export interface GroceryReply {
  */
 export async function groceryView(env: Env): Promise<GroceryReply> {
   const [items, stores, area] = [await listGroceries(env.DB), await allStores(env), await getArea(env)];
-  const storeButtons = pairs(stores.slice(0, 12).map((s, i) => ({ text: `🏪 ${s.slice(0, 24)}`, data: `gs:${i}` })));
+  const storeButtons = pairs(stores.slice(0, 16).map((s, i) => ({ text: `🏪 ${s.slice(0, 24)}`, data: `gs:${i}` })));
   const extras: InlineButton[] = [{ text: "➕ Add a store", data: "gnew" }, { text: area ? "📍 Change ZIP" : "📍 Stores near me", data: "gzip" }];
   const near = area ? ` near ${escapeHtml(area.name)}` : "";
   const choose = stores.length

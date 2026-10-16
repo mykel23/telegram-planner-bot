@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { interpretWithRules } from "../src/fallback";
-import { addedText, areaFromZipResponse, parseZip, photonToOsm, splitGroceryItems, storeQuestion, storeRows, storesFromOsm } from "../src/grocery";
+import { addedText, areaFromZipResponse, isKnownChain, parseZip, photonToOsm, splitGroceryItems, storeQuestion, storeRows, storesFromOsm } from "../src/grocery";
 import { finishButtons } from "../src/views";
 import { describeWeather, weatherLine } from "../src/weather";
 import type { Task } from "../src/env";
@@ -67,9 +67,33 @@ describe("stores near a ZIP code", () => {
       ],
     };
     expect(storesFromOsm(sample, 41.8858, -87.6181)).toEqual(["Mariano's", "Jewel-Osco", "Aldi"]);
+  });
+
+  it("puts big chains ahead of closer small shops", () => {
+    const sample = {
+      elements: [
+        { lat: 32.78, lon: -96.8, tags: { shop: "supermarket", name: "Corner Market" } },
+        { lat: 32.79, lon: -96.8, tags: { shop: "convenience_store", name: "Quick Stop" } },
+        { lat: 32.85, lon: -96.8, tags: { shop: "supermarket", name: "Kroger Marketplace", brand: "Kroger" } },
+        { lat: 32.86, lon: -96.8, tags: { shop: "supermarket", name: "Sprouts Farmers Market", brand: "Sprouts Farmers Market" } },
+        { lat: 32.9, lon: -96.8, tags: { shop: "wholesale", name: "Restaurant Depot", brand: "Restaurant Depot" } },
+        { lat: 32.8, lon: -96.8, tags: { shop: "department_store", name: "Kohl's", brand: "Kohl's" } },
+        { lat: 32.81, lon: -96.8, tags: { shop: "department_store", name: "Walmart Supercenter", brand: "Walmart" } },
+      ],
+    };
+    expect(storesFromOsm(sample, 32.78, -96.8)).toEqual([
+      "Walmart",
+      "Kroger",
+      "Sprouts Farmers Market",
+      "Restaurant Depot",
+      "Corner Market",
+      "Quick Stop",
+    ]);
+    expect(isKnownChain("Trader Joe's")).toBe(true);
+    expect(isKnownChain("Targeted Foods")).toBe(false);
     expect(storesFromOsm({}, 0, 0)).toEqual([]);
     // Stores past the distance limit are left out.
-    expect(storesFromOsm(sample, 41.8858, -87.6181, 0.5)).toEqual(["Mariano's"]);
+    expect(storesFromOsm(sample, 32.78, -96.8, 1)).toEqual(["Corner Market", "Quick Stop"]);
   });
 
   it("reads Photon results the same way", () => {
