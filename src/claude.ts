@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
-import type { Recurring, Reminder } from "./db";
+import type { Memory, Recurring, Reminder } from "./db";
 import type { Env, Horizon, Task } from "./env";
 import type { PeriodLabels } from "./time";
 
@@ -41,18 +41,33 @@ function taskSnapshot(tasks: Task[]): string {
 const DAY = z.enum(["mon", "tue", "wed", "thu", "fri", "sat", "sun"]);
 
 export const ActionSchema = z.object({
-  type: z.enum(["add", "done", "start", "update", "remove", "show", "repeat", "stop_repeat", "remind", "cancel_reminder"]),
+  type: z.enum([
+    "add",
+    "done",
+    "start",
+    "update",
+    "remove",
+    "show",
+    "repeat",
+    "stop_repeat",
+    "remind",
+    "cancel_reminder",
+    "remember",
+    "forget",
+  ]),
   task_id: z
     .number()
     .int()
     .nullable()
     .describe(
-      "ID of an existing task (done, start, update, remove), repeating task (stop_repeat) or reminder (cancel_reminder). Otherwise null.",
+      "ID of an existing task (done, start, update, remove), repeating task (stop_repeat), reminder (cancel_reminder) or memory (forget). Otherwise null.",
     ),
   title: z
     .string()
     .nullable()
-    .describe("Task title for add or repeat, a new title for update, or what to be reminded about for remind. Otherwise null."),
+    .describe(
+      "Task title for add or repeat, a new title for update, what to be reminded about for remind, or the fact to keep for remember. Otherwise null.",
+    ),
   horizon: z
     .enum(["day", "week", "month"])
     .nullable()
@@ -102,6 +117,8 @@ Turn the user's message into a list of actions:
 - stop_repeat: stop a repeating task ("stop repeating gym", "no more daily walks"). Use the ID from the repeating tasks list.
 - remind: a reminder at a set time ("remind me to call the bank at 2pm", "remind me in 20 minutes to stretch"). Put what to remind about in title and the local time in remind_at. If no day is given and the time has already passed today, use tomorrow. If the user adds a task with a specific clock time ("call mom tomorrow at 6pm"), return both an add and a remind.
 - cancel_reminder: cancel an upcoming reminder. Use the ID from the reminders list.
+- remember: the user tells you something about themselves or their life to keep in mind for planning ("remember I work night shifts on Tuesdays", "I'm caring for my dad this month", "I'm most focused in the mornings"). Put the fact in title, in third person and short ("Works night shifts on Tuesdays"). Only for lasting facts, not tasks.
+- forget: the user says a remembered fact is no longer true. Use the ID from the memory list.
 - Category: for add and repeat, set a category when the task makes it obvious (a work meeting is Work, the gym is Health, groceries are Errands). Reuse the user's existing categories when they fit.
 
 Rules:
@@ -112,6 +129,7 @@ Rules:
 
 export interface InterpretContext {
   tasks: Task[];
+  memories: Memory[];
   recurring: Recurring[];
   reminders: Reminder[];
   /** "Friday, Oct 16" */
@@ -125,6 +143,9 @@ export async function interpretMessage(env: Env, text: string, ctx: InterpretCon
   const { tasks, labels } = ctx;
   const repeating = ctx.recurring.length
     ? ctx.recurring.map((r) => JSON.stringify({ id: r.id, title: r.title, rule: r.rule })).join("\n")
+    : "(none)";
+  const memories = ctx.memories.length
+    ? ctx.memories.map((m) => JSON.stringify({ id: m.id, fact: m.text })).join("\n")
     : "(none)";
   const reminders = ctx.reminders.length
     ? ctx.reminders.map((r) => JSON.stringify({ id: r.id, text: r.text, at_utc: r.remind_at })).join("\n")
@@ -142,7 +163,8 @@ export async function interpretMessage(env: Env, text: string, ctx: InterpretCon
           `This week is ${labels.week} (${labels.iso.weekStart} to ${labels.iso.weekEnd}).\n\n` +
           `Active tasks (JSON lines):\n${taskSnapshot(tasks)}\n\n` +
           `Repeating tasks (JSON lines):\n${repeating}\n\n` +
-          `Upcoming reminders (JSON lines):\n${reminders}\n\nUser message:\n${text}`,
+          `Upcoming reminders (JSON lines):\n${reminders}\n\n` +
+          `What you remember about the user (JSON lines):\n${memories}\n\nUser message:\n${text}`,
       },
     ],
   });
@@ -171,7 +193,7 @@ export const PlanSchema = z.object({
 export type Plan = z.infer<typeof PlanSchema>;
 
 const PLAN_SYSTEM = `You are a planning assistant. After the user's weekly check-in, sort every active task into exactly one list:
-- day: what to focus on first, the next working day. At most 5 tasks. Tasks with status "doing" usually belong here.
+- day: what to focus on first, the next working day. No more than the user's daily capacity (given below). Tasks with status "doing" usually belong here.
 - week: what should get done this week.
 - month: important but can wait until later this month.
 
@@ -179,9 +201,32 @@ Weeks run Monday 12:00 AM to Sunday 11:59 PM. The check-in usually happens on Su
 
 Dates matter most: a task whose preferred_date or due_date is on or before the planning day belongs in day; one whose dates fall in the planning week belongs in week; one whose dates fall later belongs in month. Without dates, use rank as the main signal (1 is most important). Respect a list the user set on purpose unless rank strongly disagrees. Return an assignment for every task ID you are given and no others.
 
+Respect the user's daily capacity and what you know about their life and patterns: when they say they're stretched thin, or a weekday is usually weak for them, plan lighter and move the rest to week or month. In the note, be warm and realistic, never guilt-tripping.
+
 Categories: for each task whose category is null, suggest a one-word category (Work, Personal, Health, Home, Errands, Finance, or one the user already uses) when the task makes it obvious; otherwise null. Leave tasks that already have a category as null.`;
 
-export async function planHorizons(env: Env, tasks: Task[], todayLabel: string, labels: PeriodLabels): Promise<Plan> {
+export interface PlanContext {
+  /** Most tasks a day the user said they can handle this month. */
+  dayCap: number;
+  /** What the bot has learned from history, or "". */
+  patterns: string;
+  memories: Memory[];
+}
+
+export async function planHorizons(
+  env: Env,
+  tasks: Task[],
+  todayLabel: string,
+  labels: PeriodLabels,
+  ctx: PlanContext,
+): Promise<Plan> {
+  const about = [
+    `Daily capacity this month: at most ${ctx.dayCap} tasks a day.`,
+    ctx.patterns ? `Patterns from their history: ${ctx.patterns}` : "",
+    ctx.memories.length ? `About the user: ${ctx.memories.map((m) => m.text).join("; ")}.` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
   const response = await client(env).messages.parse({
     model: env.CLAUDE_MODEL,
     max_tokens: 4000,
@@ -190,7 +235,9 @@ export async function planHorizons(env: Env, tasks: Task[], todayLabel: string, 
     messages: [
       {
         role: "user",
-        content: `Today is ${todayLabel}. Planning: day = ${labels.day} (${labels.iso.day}), week = ${labels.week} (${labels.iso.weekStart} to ${labels.iso.weekEnd}), month = ${labels.month}.\n\nActive tasks (JSON lines):\n${taskSnapshot(tasks)}`,
+        content:
+          `Today is ${todayLabel}. Planning: day = ${labels.day} (${labels.iso.day}), week = ${labels.week} (${labels.iso.weekStart} to ${labels.iso.weekEnd}), month = ${labels.month}.\n\n` +
+          `${about}\n\nActive tasks (JSON lines):\n${taskSnapshot(tasks)}`,
       },
     ],
   });

@@ -2,12 +2,14 @@ import { getCheckin } from "./checkin";
 import { FIELDS, getEdit } from "./edit";
 import type { Env } from "./env";
 import { getReview } from "./review";
+import { MENU_ROWS } from "./menu";
+import { CAPACITY, VOICES, cap, getPicker } from "./settings";
 import type { Keyboard } from "./telegram";
 
 /**
  * Works out which buttons to show from where the conversation is: the evening
- * check-in, the weekly check-in or an edit. With nothing in progress, any old
- * buttons are removed. Every button sends text the bot already understands.
+ * check-in, the weekly check-in or an edit. With nothing in progress, the home
+ * menu is shown. Every button sends text the bot already understands.
  */
 
 const WEEKDAYS = [
@@ -25,9 +27,19 @@ function numbers(count: number): string[][] {
   return rows;
 }
 
+const CAPACITY_BUTTONS = [[CAPACITY.light.button, CAPACITY.normal.button, CAPACITY.full.button]];
+
 export async function keyboardFor(env: Env): Promise<Keyboard> {
+  const picker = await getPicker(env);
+  if (picker?.kind === "capacity") return CAPACITY_BUTTONS;
+  if (picker?.kind === "voice") {
+    const names = VOICES.map((v) => cap(v.id));
+    return [names.slice(0, 5), names.slice(5), ["🔇 Off", "✅ Done"]];
+  }
+
   const checkin = await getCheckin(env);
   if (checkin) {
+    if (checkin.stage === "capacity") return CAPACITY_BUTTONS;
     if (checkin.stage === "collect") return [["Done"]];
     switch (checkin.step ?? "rank") {
       case "rank":
@@ -70,5 +82,6 @@ export async function keyboardFor(env: Env): Promise<Keyboard> {
     return [["✅ Done", "➡️ Tomorrow"], ["🗑 Drop"]];
   }
 
-  return "remove";
+  if (picker?.kind === "add") return "remove";
+  return { menu: MENU_ROWS };
 }

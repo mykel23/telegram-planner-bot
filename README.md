@@ -23,6 +23,10 @@ To-do apps wait for you to open them. I wanted a planner that comes to me: a sho
 | **Repeating tasks** | "Add gym every Mon, Wed and Fri" or "pay rent on the 1st of every month" come back on their own. A missed one is replaced by the next, so they never pile up. |
 | **Stuck tasks** | If a task gets pushed back three times, the bot asks whether to split it into smaller steps, move it to the month list, drop it or keep it. |
 | **Categories** | Tasks can be tagged Work, Personal, Health and so on, and `/work` shows just that category. The bot suggests categories on its own. |
+| **It learns how I work** | Every evening answer is logged. From the last four weeks the bot works out how much I really finish per day, my strongest and weakest days, and what keeps slipping, and plans around it. `/insights` shows what it has learned. I can also tell it things like "remember I'm caring for my dad this month". |
+| **Monthly capacity check** | At the first weekly check-in of each month the bot asks how much I can realistically take on right now (light, normal or full) and caps each day's list to match. |
+| **Voice replies** | With a voice picked in `/voice`, the bot reads the morning plan and reminders aloud and answers voice notes with voice notes. |
+| **Home menu** | A button menu stays at the bottom of the chat (Today, Week, Add task, Edit, Review day, Reminders and more). `/menu` greets me with a quick status. |
 | **Buttons** | Check-ins and edits show tap buttons (Done, Tomorrow, Drop, ranks, weekdays), so most answers are one tap. |
 
 ## Demo
@@ -39,13 +43,13 @@ flowchart LR
     Cron["⏰ Cron trigger<br/>every minute"] --> W
     W <-->|tasks, ranks, status| DB[("Cloudflare D1")]
     W -->|"understand messages,<br/>build weekly lists"| C["Claude API"]
-    W -->|voice notes| AI["Workers AI<br/>(Whisper)"]
+    W -->|"voice in (Whisper),<br/>voice out (Aura)"| AI["Workers AI"]
 ```
 
 - **Telegram → Worker:** Telegram delivers each message to the Worker's `/telegram` webhook. A secret header proves the request really came from Telegram.
 - **Cron["⏰ Cron trigger<br/>every minute"]→ Worker:** Cloudflare runs the Worker every minute. The code converts the time to my time zone and sends reminders, adds the day's repeating tasks, and sends the morning message, the evening check-in or the weekly check-in when each is due. This keeps 7:00 AM at 7:00 AM through daylight saving changes, which a fixed UTC cron can't do.
 - **Worker → Claude:** Claude turns free-form messages into structured actions (add, done, start, update, remove, show) and sorts tasks into month, week and day lists after the check-in. Both calls use [structured outputs](https://docs.claude.com/en/docs/build-with-claude/structured-outputs), so the bot always gets valid JSON back.
-- **Worker → Workers AI:** Voice notes are downloaded from Telegram and transcribed with Whisper on Cloudflare's own AI service, then handled like a typed message.
+- **Worker → Workers AI:** Voice notes are downloaded from Telegram and transcribed with Whisper on Cloudflare's own AI service, then handled like a typed message. Spoken replies use Deepgram Aura voices on the same service.
 - **Worker → D1:** Tasks, ranks, status, repeating tasks, reminders and the check-in's progress are stored in a SQLite database, so nothing is lost when the Worker restarts or redeploys.
 
 ### Design decisions
@@ -62,7 +66,7 @@ flowchart LR
 | Service | Monthly cost |
 |---|---|
 | Cloudflare Workers, cron triggers, D1 (free plan) | $0 |
-| Workers AI voice transcription (free daily allowance) | $0 |
+| Workers AI voice in and out (free daily allowance) | $0 |
 | Telegram Bot API | $0 |
 | Claude API (Haiku, about 30 daily messages, 4 check-ins and a few replies a day) | well under $1 |
 | **Total** | **under $1** |
@@ -84,6 +88,11 @@ flowchart LR
 | `add dentist, category Health` | Adds a task with a category |
 | 🎙 a voice note | Works like typing the same words |
 | `/repeats` `/reminders` `/categories` | Shows repeating tasks, upcoming reminders or categories |
+| `remember I work nights on Tuesdays` / `/memory` | Tells the bot something to plan around / shows what it remembers |
+| `/insights` | What the bot has learned about how I work |
+| `/capacity` | Light, normal or full: how many tasks a day to plan |
+| `/voice` | Pick a voice for spoken replies, or turn it off |
+| `/menu` | Greeting, quick status and the button menu |
 | `/work`, `/health`, … | Shows one category's tasks |
 | `/today` `/week` `/month` `/lists` | Shows lists |
 | `/edit` | Guided edit: pick a task by number, then change its rank, preferred day, latest day, name, list or category |

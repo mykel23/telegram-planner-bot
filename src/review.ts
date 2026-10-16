@@ -1,4 +1,4 @@
-import { addTask, clearState, deleteTask, getState, getTask, listActiveTasks, setState, updateTask } from "./db";
+import { addTask, clearState, deleteTask, getState, getTask, listActiveTasks, logEvent, setState, updateTask } from "./db";
 import { splitItems } from "./checkin";
 import type { Env, Task } from "./env";
 import { effectiveHorizon, escapeHtml } from "./format";
@@ -118,6 +118,9 @@ export async function handleReviewReply(env: Env, state: ReviewState, text: stri
     const answer = parseReviewAnswer(text, state.date);
     if (answer.kind === "invalid") return `Sorry, I didn't get that. ${question(state, task)}\n\nOr send /cancel to stop.`;
 
+    // Every answer is remembered, so the bot can learn what really gets done.
+    await logEvent(env.DB, answer.kind === "yes" ? "done" : answer.kind === "drop" ? "dropped" : "pushed", task, state.date);
+
     if (answer.kind === "yes") {
       await updateTask(env.DB, task.id, { status: "done" });
       state.done++;
@@ -184,6 +187,7 @@ async function handleStuckReply(
         await updateTask(env.DB, task.id, { horizon: "month", preferred_date: null, rollovers: 0 });
         note = `🗓 Moved to this month's list, with no set day.`;
       } else if (answer === "drop") {
+        await logEvent(env.DB, "dropped", task, state.date);
         await deleteTask(env.DB, task.id);
         state.dropped++;
         note = `🗑 Dropped.`;

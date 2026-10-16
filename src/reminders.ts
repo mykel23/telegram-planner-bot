@@ -1,6 +1,7 @@
 import { addReminder, dueReminders, markReminderSent, type Reminder } from "./db";
 import type { Env } from "./env";
 import { escapeHtml } from "./format";
+import { speak } from "./settings";
 import { sendMessage } from "./telegram";
 import { addDays, friendlyDateTime, localTime, parseDayAnswer, zonedTimeToUtc } from "./time";
 
@@ -102,5 +103,6 @@ export async function sendDueReminders(env: Env, owner: string, now: Date): Prom
     const late = lateMinutes > 10 ? `\n<i>(This was due ${friendlyDateTime(new Date(reminder.remind_at), env.TIMEZONE)}.)</i>` : "";
     await sendMessage(env, owner, `⏰ <b>Reminder:</b> ${escapeHtml(reminder.text)}${late}`);
     await markReminderSent(env.DB, reminder.id);
+    await speak(env, owner, `Reminder: ${reminder.text}.`);
   }
 }

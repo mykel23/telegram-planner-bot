@@ -1,12 +1,16 @@
 import { planHorizons, sanitizePlan, suggestedCategories } from "./claude";
-import { addTask, clearState, getState, getTask, listActiveTasks, setState, updateTask } from "./db";
+import { addTask, clearState, eventsSince, getState, getTask, listActiveTasks, listMemories, setState, updateTask } from "./db";
+import { computeInsights, lookbackStart, patternSummary, weeklyScorecard } from "./insights";
+import { capacityQuestion, capacitySaved, dayCap, getCapacity, parseCapacity, setCapacity } from "./settings";
 import type { Env, Horizon } from "./env";
 import { escapeHtml, formatAllLists } from "./format";
 import { planWithRules } from "./fallback";
-import { friendlyDate, parseDayAnswer, periodLabels, shortDate } from "./time";
+import { addDays, friendlyDate, parseDayAnswer, periodLabels, shortDate } from "./time";
 
 /**
  * The weekly check-in is a small conversation:
+ *   capacity: at the first check-in of each month, the bot first asks how much
+ *             the user can realistically take on this month.
  *   collect:  the user sends tasks (one per line or one per message), then "done".
  *   details:  for each new task, the bot asks three questions in turn:
  *             rank (1-5), preferred day, and latest day it can be done.
@@ -27,7 +31,7 @@ export interface CheckinItem {
 }
 
 export interface CheckinState {
-  stage: "collect" | "rank";
+  stage: "capacity" | "collect" | "rank";
   items: CheckinItem[];
   /** Which task the bot is asking about. */
   index: number;
@@ -108,15 +112,28 @@ export function detailQuestion(state: CheckinState): string {
 
 /** Starts a check-in and returns the opening message. */
 export async function startCheckin(env: Env): Promise<string> {
-  await saveCheckin(env, { stage: "collect", items: [], index: 0, step: "rank" });
   const labels = periodLabels(new Date(), env.TIMEZONE, true);
+  const recent = await eventsSince(env.DB, addDays(labels.iso.day, -7));
+  const scorecard = weeklyScorecard(recent.filter((e) => e.local_date < labels.iso.day));
+  const opening = `🗓 <b>Weekly check-in</b>\nPlanning the week of <b>${escapeHtml(labels.week)}</b> (${escapeHtml(labels.month)}).`;
+
+  // Once a month, ask about capacity before anything else.
+  const capacity = await getCapacity(env);
+  if (capacity?.month !== labels.iso.day.slice(0, 7)) {
+    await saveCheckin(env, { stage: "capacity", items: [], index: 0, step: "rank" });
+    return [opening, scorecard, capacityQuestion(labels.month, capacity)].filter(Boolean).join("\n\n");
+  }
+
+  await saveCheckin(env, { stage: "collect", items: [], index: 0, step: "rank" });
+  return [opening, scorecard, await collectPrompt(env)].filter(Boolean).join("\n\n");
+}
+
+async function collectPrompt(env: Env): Promise<string> {
   const tasks = await listActiveTasks(env.DB);
   const existing = tasks.length
     ? `\n\nAlready on your lists (${tasks.length}):\n${tasks.map((t) => `• ${escapeHtml(t.title)}`).join("\n")}`
     : "";
   return (
-    `🗓 <b>Weekly check-in</b>\n` +
-    `Planning the week of <b>${escapeHtml(labels.week)}</b> (${escapeHtml(labels.month)}).\n\n` +
     `What do you need to get done this week or this month? Send your tasks one per line, or one per message.\n` +
     `Send <b>done</b> when you've listed everything. For each task I'll ask for a rank, the day you'd like to do it, ` +
     `and the latest day it can be done.` +
@@ -126,6 +143,16 @@ export async function startCheckin(env: Env): Promise<string> {
 
 /** Handles one reply during a check-in and returns the bot's answer. */
 export async function handleCheckinReply(env: Env, state: CheckinState, text: string): Promise<string> {
+  if (state.stage === "capacity") {
+    const level = parseCapacity(text);
+    if (!level) return `Please pick <b>Light</b>, <b>Normal</b> or <b>Full</b>.`;
+    const month = periodLabels(new Date(), env.TIMEZONE, true).iso.day.slice(0, 7);
+    await setCapacity(env, level, month);
+    state.stage = "collect";
+    await saveCheckin(env, state);
+    return `${capacitySaved(level)}\n\n${await collectPrompt(env)}`;
+  }
+
   if (state.stage === "collect") {
     if (isFinishedSignal(text)) {
       if (state.items.length === 0) return finishCheckin(env, state);
@@ -198,17 +225,23 @@ async function finishCheckin(env: Env, state: CheckinState): Promise<string> {
   }
 
   const tasks = await listActiveTasks(env.DB);
+  const cap = await dayCap(env);
   let assignments: Map<number, Horizon>;
   let categories = new Map<number, string>();
   let note = "";
   try {
-    const plan = await planHorizons(env, tasks, friendlyDate(now, env.TIMEZONE), labels);
+    const [events, memories] = await Promise.all([eventsSince(env.DB, lookbackStart(labels.iso.day)), listMemories(env.DB)]);
+    const plan = await planHorizons(env, tasks, friendlyDate(now, env.TIMEZONE), labels, {
+      dayCap: cap,
+      patterns: patternSummary(computeInsights(events)),
+      memories,
+    });
     assignments = sanitizePlan(plan, tasks);
     categories = suggestedCategories(plan, tasks);
     note = plan.note;
   } catch (err) {
     console.error("planHorizons failed, using rules", err);
-    assignments = planWithRules(tasks, labels);
+    assignments = planWithRules(tasks, labels, cap);
   }
 
   for (const task of tasks) {

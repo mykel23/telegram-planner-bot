@@ -101,6 +101,9 @@ export function interpretWithRules(text: string, tasks: Task[], ctx: RuleContext
       : { actions: [], reply: `I couldn't work out the time. Try "remind me to call the bank at 2pm".` };
   }
 
+  const remember = trimmed.match(/^(?:remember|note|fyi)[:,]?\s+(?:that\s+)?(.+)$/i);
+  if (remember) return { actions: [action({ type: "remember", title: remember[1].trim() })], reply: "" };
+
   const stop = trimmed.match(/^(?:stop repeating|stop|no more)\s+(.+)$/i);
   if (stop && ctx.recurring?.length) {
     const rec = findTask(stop[1], ctx.recurring);
@@ -149,10 +152,10 @@ export function interpretWithRules(text: string, tasks: Task[], ctx: RuleContext
  * Rule-based list building, used if Claude can't plan the week.
  * Dates come first: preferred or due on the planning day goes to today,
  * within the planning week goes to this week, later goes to this month.
- * Without dates: tasks in progress and the top-ranked (rank 1-2, up to 5)
+ * Without dates: tasks in progress and the top-ranked (rank 1-2, up to the daily capacity)
  * go to today, rank 3 to this week, rank 4-5 to this month.
  */
-export function planWithRules(tasks: Task[], labels: PeriodLabels): Map<number, Horizon> {
+export function planWithRules(tasks: Task[], labels: PeriodLabels, dayCap = 5): Map<number, Horizon> {
   const result = new Map<number, Horizon>();
   let dayCount = 0;
   for (const task of [...tasks].sort((a, b) => a.rank - b.rank || a.id - b.id)) {
@@ -163,7 +166,7 @@ export function planWithRules(tasks: Task[], labels: PeriodLabels): Map<number, 
       if (horizon === "day") dayCount++;
       continue;
     }
-    if ((task.status === "doing" || task.rank <= 2) && dayCount < 5) {
+    if ((task.status === "doing" || task.rank <= 2) && dayCount < dayCap) {
       result.set(task.id, "day");
       dayCount++;
     } else if (task.rank <= 3) {

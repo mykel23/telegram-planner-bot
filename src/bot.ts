@@ -3,8 +3,13 @@ import { type Action, type Interpretation, interpretMessage } from "./claude";
 import { cancelEdit, getEdit, handleEditReply, startEdit } from "./edit";
 import { cancelReview, getReview, handleReviewReply, startReview } from "./review";
 import {
+  addMemory,
   addTask,
   clampRank,
+  deleteMemory,
+  eventsSince,
+  listMemories,
+  logEvent,
   deleteRecurring,
   deleteReminder,
   deleteTask,
@@ -26,9 +31,25 @@ import {
   formatDailyMessage,
   formatList,
   horizonLabel,
+  morningScript,
 } from "./format";
 import { interpretWithRules } from "./fallback";
+import { computeInsights, formatInsights, lookbackStart } from "./insights";
+import {
+  cancelPicker,
+  capacityQuestion,
+  dayCap,
+  getCapacity,
+  getPicker,
+  getVoice,
+  handlePickerReply,
+  speak,
+  startPicker,
+  toSpeech,
+  voiceMenu,
+} from "./settings";
 import { keyboardFor } from "./keyboard";
+import { MENU_ROWS, menuCommand, menuGreeting } from "./menu";
 import { createRepeat, formatRepeats, ruleFromFields } from "./recurring";
 import { createReminder, formatReminders } from "./reminders";
 import { sendMessage, type TelegramUpdate } from "./telegram";
@@ -48,6 +69,7 @@ function datesText(preferred: string | null, due: string | null): string {
 }
 
 export const OWNER_KEY = "owner_chat_id";
+export const NAME_KEY = "owner_name";
 
 /**
  * Entry point for every Telegram message.
@@ -71,13 +93,18 @@ export async function handleUpdate(env: Env, update: TelegramUpdate): Promise<vo
         chatId,
         `👋 Hi${message.from?.first_name ? ` ${escapeHtml(message.from.first_name)}` : ""}! I'm your planner. ` +
           `I'll message you every morning and run a weekly check-in.\n\n${HELP_TEXT}`,
+        { menu: MENU_ROWS },
       );
+      if (message.from?.first_name) await setState(env.DB, NAME_KEY, message.from.first_name);
     } else {
       await sendMessage(env, chatId, "Send /start to set up your planner.");
     }
     return;
   }
   if (owner !== String(chatId)) return;
+  if (message.from?.first_name && !(await getState(env.DB, NAME_KEY))) {
+    await setState(env.DB, NAME_KEY, message.from.first_name);
+  }
 
   let heard = "";
   if (!text && message.voice) {
@@ -99,19 +126,31 @@ export async function handleUpdate(env: Env, update: TelegramUpdate): Promise<vo
     heard = `🎙 <i>“${escapeHtml(text)}”</i>\n\n`;
   }
 
-  const reply = await respond(env, text!);
-  if (reply) await sendMessage(env, chatId, heard + reply, await keyboardFor(env));
+  const reply = await respond(env, text!, chatId);
+  if (!reply) return;
+  await sendMessage(env, chatId, heard + reply, await keyboardFor(env));
+  // Talk back when talked to: a voice note gets a spoken answer if a voice is on.
+  if (heard) await speak(env, chatId, toSpeech(reply));
 }
 
 /** Works out the reply to one message from the owner. */
-export async function respond(env: Env, text: string): Promise<string> {
-  const command = text.startsWith("/") ? text.split(/[\s@]/)[0].toLowerCase() : null;
+export async function respond(env: Env, text: string, chatId: number | string = ""): Promise<string> {
+  const tapped = menuCommand(text);
+  const command = tapped ?? (text.startsWith("/") ? text.split(/[\s@]/)[0].toLowerCase() : null);
   const labels = periodLabels(new Date(), env.TIMEZONE);
 
   switch (command) {
-    case "/start":
     case "/help":
       return HELP_TEXT;
+    case "/start":
+    case "/menu":
+      await Promise.all([cancelEdit(env), cancelPicker(env)]);
+      return menuGreeting(env, labels);
+    case "/add":
+      if (await getCheckin(env)) return "Finish the check-in first, or send /cancel to stop it.";
+      await Promise.all([cancelEdit(env), cancelReview(env)]);
+      await startPicker(env, "add");
+      return `➕ What should I add? Type it or send a voice note, like <i>call the bank Friday, rank 2</i>.`;
     case "/today":
       return formatList(await listActiveTasks(env.DB), "day", labels);
     case "/week":
@@ -121,10 +160,14 @@ export async function respond(env: Env, text: string): Promise<string> {
     case "/lists":
     case "/all":
       return formatAllLists(await listActiveTasks(env.DB), labels);
-    case "/daily":
-      return formatDailyMessage(await listActiveTasks(env.DB), friendlyDate(new Date(), env.TIMEZONE), labels);
+    case "/daily": {
+      const [tasks, cap] = [await listActiveTasks(env.DB), await dayCap(env)];
+      const dateLabel = friendlyDate(new Date(), env.TIMEZONE);
+      if (chatId !== "") await speak(env, chatId, morningScript(tasks, dateLabel, labels, cap));
+      return formatDailyMessage(tasks, dateLabel, labels, cap);
+    }
     case "/checkin":
-      await Promise.all([cancelEdit(env), cancelReview(env)]);
+      await Promise.all([cancelEdit(env), cancelReview(env), cancelPicker(env)]);
       return startCheckin(env);
     case "/edit":
       if (await getCheckin(env)) return "Finish the check-in first, or send /cancel to stop it.";
@@ -134,6 +177,24 @@ export async function respond(env: Env, text: string): Promise<string> {
       if (await getCheckin(env)) return "Finish the check-in first, or send /cancel to stop it.";
       await cancelEdit(env);
       return startReview(env);
+    case "/voice":
+      if (await getCheckin(env)) return "Finish the check-in first, or send /cancel to stop it.";
+      await Promise.all([cancelEdit(env), cancelReview(env)]);
+      await startPicker(env, "voice");
+      return voiceMenu(await getVoice(env));
+    case "/capacity":
+      if (await getCheckin(env)) return "Finish the check-in first, or send /cancel to stop it.";
+      await Promise.all([cancelEdit(env), cancelReview(env)]);
+      await startPicker(env, "capacity");
+      return capacityQuestion(labels.month, await getCapacity(env));
+    case "/insights":
+      return formatInsights(computeInsights(await eventsSince(env.DB, lookbackStart(labels.iso.day))));
+    case "/memory": {
+      const memories = await listMemories(env.DB);
+      return memories.length
+        ? `🧠 <b>What I remember about you</b>\n${memories.map((m) => `• ${escapeHtml(m.text)}`).join("\n")}\n\nTo change one, text <code>forget …</code>.`
+        : `🧠 Nothing yet. Tell me things like <code>remember I work night shifts on Tuesdays</code> and I'll plan around them.`;
+    }
     case "/repeats":
       return formatRepeats(await listRecurring(env.DB));
     case "/reminders":
@@ -145,15 +206,17 @@ export async function respond(env: Env, text: string): Promise<string> {
         : `🏷 No categories yet. Try <code>add dentist, category Health</code>.`;
     }
     case "/cancel": {
-      const [checkinActive, editActive, reviewActive] = await Promise.all([
+      const [checkinActive, editActive, reviewActive, pickerActive] = await Promise.all([
         getCheckin(env),
         getEdit(env),
         getReview(env),
+        getPicker(env),
       ]);
-      await Promise.all([cancelCheckin(env), cancelEdit(env), cancelReview(env)]);
+      await Promise.all([cancelCheckin(env), cancelEdit(env), cancelReview(env), cancelPicker(env)]);
       if (checkinActive) return "Check-in cancelled. Nothing new was saved.";
       if (editActive) return "Edit stopped. Changes you already confirmed are kept.";
       if (reviewActive) return "Evening check-in stopped. Answers you already gave are kept.";
+      if (pickerActive) return "Okay, nothing changed.";
       return "There's nothing to cancel.";
     }
   }
@@ -165,6 +228,14 @@ export async function respond(env: Env, text: string): Promise<string> {
     return `I don't know that command.\n\n${HELP_TEXT}`;
   }
 
+  const picker = await getPicker(env);
+  if (picker?.kind === "add") {
+    await cancelPicker(env);
+    if (!/^(add|todo|new task)\b/i.test(text)) text = `add ${text}`;
+  } else if (picker) {
+    return handlePickerReply(env, chatId, picker, text, labels.iso.day.slice(0, 7));
+  }
+
   const checkin = await getCheckin(env);
   if (checkin) return handleCheckinReply(env, checkin, text);
 
@@ -174,10 +245,11 @@ export async function respond(env: Env, text: string): Promise<string> {
   const review = await getReview(env);
   if (review) return handleReviewReply(env, review, text);
 
-  const [tasks, recurring, reminders] = await Promise.all([
+  const [tasks, recurring, reminders, memories] = await Promise.all([
     listActiveTasks(env.DB),
     listRecurring(env.DB),
     listUpcomingReminders(env.DB),
+    listMemories(env.DB),
   ]);
   const now = new Date();
   let interpretation: Interpretation;
@@ -186,6 +258,7 @@ export async function respond(env: Env, text: string): Promise<string> {
       tasks,
       recurring,
       reminders,
+      memories,
       todayLabel: friendlyDate(now, env.TIMEZONE),
       clock: clockTime(now, env.TIMEZONE),
       labels: periodLabels(now, env.TIMEZONE),
@@ -252,6 +325,19 @@ async function applyAction(env: Env, action: Action, byId: Map<number, Task>): P
     return `🛑 <b>${escapeHtml(rec.title)}</b> won't repeat anymore.`;
   }
 
+  if (action.type === "remember") {
+    if (!action.title?.trim()) return null;
+    const memory = await addMemory(env.DB, action.title);
+    return `🧠 Got it, I'll remember: <i>${escapeHtml(memory.text)}</i>`;
+  }
+
+  if (action.type === "forget") {
+    const memory = (await listMemories(env.DB)).find((m) => m.id === action.task_id);
+    if (!memory) return "🤔 I couldn't find that. Send /memory to see what I remember.";
+    await deleteMemory(env.DB, memory.id);
+    return `🧠 Forgotten: <i>${escapeHtml(memory.text)}</i>`;
+  }
+
   if (action.type === "remind") {
     const m = action.remind_at?.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{1,2}):(\d{2})/);
     if (!action.title?.trim() || !m) return "🤔 I couldn't work out when to remind you. Try \"remind me to call the bank at 2pm\".";
@@ -273,12 +359,14 @@ async function applyAction(env: Env, action: Action, byId: Map<number, Task>): P
   switch (action.type) {
     case "done":
       await updateTask(env.DB, task.id, { status: "done" });
+      await logEvent(env.DB, "done", task, periodLabels(new Date(), env.TIMEZONE).iso.day);
       byId.delete(task.id);
       return `✅ Done: ${title}. Nice work!`;
     case "start":
       await updateTask(env.DB, task.id, { status: "doing" });
       return `⏳ Working on: ${title}`;
     case "remove":
+      await logEvent(env.DB, "dropped", task, periodLabels(new Date(), env.TIMEZONE).iso.day);
       await deleteTask(env.DB, task.id);
       byId.delete(task.id);
       return `🗑 Removed: ${title}`;

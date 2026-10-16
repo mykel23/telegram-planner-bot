@@ -80,9 +80,15 @@ export function formatCategory(tasks: Task[], category: string, labels: PeriodLa
   return `🏷 <b>${escapeHtml(mine[0].category ?? category)}</b>\n\n${sections.join("\n\n")}`;
 }
 
-export function formatDailyMessage(tasks: Task[], dateLabel: string, labels: PeriodLabels): string {
+/** Today's tasks in order, split at the daily capacity. */
+function todaySplit(tasks: Task[], labels: PeriodLabels, dayCap: number) {
+  const all = tasks.filter((t) => effectiveHorizon(t, labels) === "day").sort(byPriority);
+  return { today: all.slice(0, dayCap), extra: all.slice(dayCap) };
+}
+
+export function formatDailyMessage(tasks: Task[], dateLabel: string, labels: PeriodLabels, dayCap = Infinity): string {
   const doing = tasks.filter((t) => t.status === "doing");
-  const today = tasks.filter((t) => effectiveHorizon(t, labels) === "day").sort(byPriority);
+  const { today, extra } = todaySplit(tasks, labels, dayCap);
   const upNext = tasks
     .filter((t) => effectiveHorizon(t, labels) === "week" && t.status !== "doing")
     .sort(byPriority)
@@ -106,11 +112,36 @@ export function formatDailyMessage(tasks: Task[], dateLabel: string, labels: Per
     `<b>✅ Today's ranked to-do list</b>\n` +
       (today.length ? today.map(line).join("\n") : "<i>Nothing set for today.</i>"),
   );
+  if (extra.length) {
+    parts.push(
+      `<b>➕ If you have extra time</b>\n${extra.map((t, i) => formatTaskLine(t, today.length + i + 1, labels.iso.day)).join("\n")}`,
+    );
+  }
   if (upNext.length) {
     parts.push(`<b>📅 Up next this week</b>\n${upNext.map(line).join("\n")}`);
   }
   parts.push(`<i>Reply "done with …", "add …", or "what's on today?" anytime.</i>`);
   return parts.join("\n\n");
+}
+
+/** The morning plan as something to listen to. */
+export function morningScript(tasks: Task[], dateLabel: string, labels: PeriodLabels, dayCap = Infinity): string {
+  const { today } = todaySplit(tasks, labels, dayCap);
+  const doing = tasks.filter((t) => t.status === "doing");
+  const lines = [`Good morning. Here's your plan for ${dateLabel}.`];
+  if (today.length === 0) {
+    lines.push("Nothing is set for today, so it's a good day to get ahead or rest.");
+  } else {
+    const words = ["First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh"];
+    lines.push(`You have ${today.length} ${today.length === 1 ? "thing" : "things"} today.`);
+    today.forEach((t, i) => {
+      const due = t.due_date === labels.iso.day ? ", which is due today" : t.due_date && t.due_date < labels.iso.day ? ", which is overdue" : "";
+      lines.push(`${words[i] ?? "Next"}, ${t.title}${due}.`);
+    });
+  }
+  if (doing.length) lines.push(`You're in the middle of ${doing.map((t) => t.title).join(" and ")}.`);
+  lines.push("Have a great day.");
+  return lines.join(" ");
 }
 
 export const HELP_TEXT = [
@@ -125,6 +156,7 @@ export const HELP_TEXT = [
   "• <code>remind me to call the bank at 2pm</code> or <code>remind me in 20 minutes to stretch</code>",
   "• <code>add dentist, category Health</code>, then <code>/health</code> shows that category",
   "• 🎙 Send a voice note and I'll treat it like a text",
+  "• <code>remember I work night shifts on Tuesdays</code> and I'll plan around it",
   "",
   "<b>Commands</b>",
   "/today /week /month /lists: show your lists",
@@ -132,6 +164,10 @@ export const HELP_TEXT = [
   "/repeats: your repeating tasks",
   "/reminders: upcoming reminders",
   "/categories: your categories",
+  "/insights: what I've learned about how you work",
+  "/memory: what I remember about you",
+  "/capacity: how much you can take on this month",
+  "/voice: pick a voice for spoken replies, or turn it off",
   "/checkin: start the weekly check-in now",
   "/daily: send the morning message now",
   "/review: start the evening check-in now",

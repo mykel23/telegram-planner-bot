@@ -7,8 +7,10 @@ import { sendDueReminders } from "./reminders";
 import { startReview } from "./review";
 import { ensureSchema, getState, listActiveTasks, logSend, setState } from "./db";
 import type { Env } from "./env";
-import { formatDailyMessage } from "./format";
-import { sendMessage } from "./telegram";
+import { formatDailyMessage, morningScript } from "./format";
+import { dayCap, speak } from "./settings";
+import { BOT_COMMANDS, COMMANDS_VERSION } from "./menu";
+import { sendMessage, setMyCommands } from "./telegram";
 import { friendlyDate, isDailyDue, isWeeklyDue, localTime, periodLabels } from "./time";
 
 /**
@@ -26,6 +28,15 @@ export async function runSchedule(env: Env, now: Date): Promise<void> {
 
   const local = localTime(now, env.TIMEZONE);
   const jobs: [string, () => Promise<void>][] = [
+    [
+      // Keeps Telegram's Menu button in step with the bot's commands, after any deploy.
+      "commands",
+      async () => {
+        if ((await getState(env.DB, "commands_version")) === COMMANDS_VERSION) return;
+        await setMyCommands(env, BOT_COMMANDS);
+        await setState(env.DB, "commands_version", COMMANDS_VERSION);
+      },
+    ],
     ["recurring", async () => void (await generateRecurring(env, local.date))],
     ["reminders", () => sendDueReminders(env, owner, now)],
     [
@@ -33,10 +44,11 @@ export async function runSchedule(env: Env, now: Date): Promise<void> {
       async () => {
         if (!isDailyDue(local, Number(env.DAILY_HOUR), await getState(env.DB, "last_daily_date"))) return;
         const tasks = await listActiveTasks(env.DB);
-        const text = formatDailyMessage(tasks, friendlyDate(now, env.TIMEZONE), periodLabels(now, env.TIMEZONE));
-        await sendMessage(env, owner, text, await keyboardFor(env));
+        const [dateLabel, labels, cap] = [friendlyDate(now, env.TIMEZONE), periodLabels(now, env.TIMEZONE), await dayCap(env)];
+        await sendMessage(env, owner, formatDailyMessage(tasks, dateLabel, labels, cap), await keyboardFor(env));
         await setState(env.DB, "last_daily_date", local.date);
         await logSend(env.DB, "daily", local.date);
+        await speak(env, owner, morningScript(tasks, dateLabel, labels, cap));
       },
     ],
     [

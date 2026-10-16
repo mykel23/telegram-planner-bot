@@ -34,6 +34,19 @@ const SCHEMA = [
     sent INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
+  `CREATE TABLE IF NOT EXISTS memories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    text TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    category TEXT,
+    local_date TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
   `CREATE TABLE IF NOT EXISTS sends (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL,
@@ -283,6 +296,57 @@ export async function markReminderSent(db: D1Database, id: number): Promise<void
 
 export async function deleteReminder(db: D1Database, id: number): Promise<void> {
   await db.prepare(`DELETE FROM reminders WHERE id = ?`).bind(id).run();
+}
+
+// ---------- things the owner asked the bot to remember ----------
+
+export interface Memory {
+  id: number;
+  text: string;
+}
+
+export async function listMemories(db: D1Database): Promise<Memory[]> {
+  const { results } = await db.prepare(`SELECT id, text FROM memories ORDER BY id`).all<Memory>();
+  return results;
+}
+
+export async function addMemory(db: D1Database, text: string): Promise<Memory> {
+  const row = await db
+    .prepare(`INSERT INTO memories (text) VALUES (?) RETURNING id, text`)
+    .bind(text.trim())
+    .first<Memory>();
+  if (!row) throw new Error("Insert returned no row");
+  return row;
+}
+
+export async function deleteMemory(db: D1Database, id: number): Promise<void> {
+  await db.prepare(`DELETE FROM memories WHERE id = ?`).bind(id).run();
+}
+
+// ---------- history, used to learn the owner's patterns ----------
+
+export type EventKind = "done" | "pushed" | "dropped";
+
+export interface TaskEvent {
+  kind: EventKind;
+  title: string;
+  category: string | null;
+  local_date: string;
+}
+
+export async function logEvent(db: D1Database, kind: EventKind, task: Pick<Task, "title" | "category">, localDate: string) {
+  await db
+    .prepare(`INSERT INTO events (kind, title, category, local_date) VALUES (?, ?, ?, ?)`)
+    .bind(kind, task.title, task.category ?? null, localDate)
+    .run();
+}
+
+export async function eventsSince(db: D1Database, fromDate: string): Promise<TaskEvent[]> {
+  const { results } = await db
+    .prepare(`SELECT kind, title, category, local_date FROM events WHERE local_date >= ? ORDER BY id`)
+    .bind(fromDate)
+    .all<TaskEvent>();
+  return results;
 }
 
 // ---------- key/value state ----------
