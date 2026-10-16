@@ -73,18 +73,19 @@ export function capacitySaved(level: CapacityLevel): string {
 
 // ---------- voice ----------
 
-/** Voices from Cloudflare Workers AI (Deepgram Aura 2). The first is the default. */
-export const VOICES: { id: string; about: string }[] = [
-  { id: "draco", about: "male" },
-  { id: "pandora", about: "female" },
-  { id: "hyperion", about: "male" },
-  { id: "theia", about: "female" },
-  { id: "orion", about: "male" },
-  { id: "apollo", about: "male" },
-  { id: "zeus", about: "male, deep" },
-  { id: "athena", about: "female" },
-  { id: "luna", about: "female" },
-  { id: "helena", about: "female" },
+/**
+ * Voices from Cloudflare Workers AI (Deepgram Aura 1 and 2). The provider names
+ * them after figures from myth; "about" says what they sound like.
+ */
+export const VOICES: { id: string; about: string; model: "aura-1" | "aura-2" }[] = [
+  { id: "helios", about: "British, male", model: "aura-1" },
+  { id: "angus", about: "Irish, male", model: "aura-1" },
+  { id: "orpheus", about: "American, male", model: "aura-1" },
+  { id: "perseus", about: "American, male", model: "aura-1" },
+  { id: "stella", about: "American, female", model: "aura-1" },
+  { id: "athena", about: "British, female", model: "aura-1" },
+  { id: "draco", about: "male, newer model", model: "aura-2" },
+  { id: "pandora", about: "female, newer model", model: "aura-2" },
 ];
 
 const VOICE_KEY = "voice";
@@ -149,18 +150,15 @@ async function audioBytes(result: unknown): Promise<Uint8Array> {
   throw new Error(`Unexpected text-to-speech output: ${typeof result}`);
 }
 
-/** Speech in the chosen voice. Tries OGG/Opus (Telegram's native voice format), then MP3. */
+/** Speech in the chosen voice, as MP3 (clearer than low-bitrate Opus; Telegram plays it as a voice note). */
 export async function synthesize(env: Env, text: string, speaker: string): Promise<{ audio: Uint8Array; filename: string }> {
-  // The speaker list is checked by parseVoice; the cast keeps the model's strict type happy.
-  const voice = speaker as "draco";
-  try {
-    const out = await env.AI.run("@cf/deepgram/aura-2-en", { text, speaker: voice, encoding: "opus", container: "ogg" });
-    return { audio: await audioBytes(out), filename: "voice.ogg" };
-  } catch (err) {
-    console.error("aura-2 opus failed, trying mp3", err);
-    const out = await env.AI.run("@cf/deepgram/aura-2-en", { text, speaker: voice });
-    return { audio: await audioBytes(out), filename: "voice.mp3" };
-  }
+  const model = VOICES.find((v) => v.id === speaker)?.model ?? "aura-2";
+  // The speaker is checked against VOICES by parseVoice; the casts keep each model's strict type happy.
+  const out =
+    model === "aura-1"
+      ? await env.AI.run("@cf/deepgram/aura-1", { text, speaker: speaker as "helios", encoding: "mp3" })
+      : await env.AI.run("@cf/deepgram/aura-2-en", { text, speaker: speaker as "draco", encoding: "mp3" });
+  return { audio: await audioBytes(out), filename: "voice.mp3" };
 }
 
 /** Sends a spoken version of a message if a voice is on. Never throws: the text already went out. */

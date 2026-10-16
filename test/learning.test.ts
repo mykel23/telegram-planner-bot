@@ -61,6 +61,7 @@ describe("capacity and voice", () => {
 
   it("reads voice choices", () => {
     expect(parseVoice("Draco")).toBe("draco");
+    expect(parseVoice("Helios")).toBe("helios");
     expect(parseVoice("🔇 Off")).toBe("off");
     expect(parseVoice("jarvis")).toBeNull();
   });

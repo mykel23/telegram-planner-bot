@@ -34,7 +34,7 @@ export async function keyboardFor(env: Env): Promise<Keyboard> {
   if (picker?.kind === "capacity") return CAPACITY_BUTTONS;
   if (picker?.kind === "voice") {
     const names = VOICES.map((v) => cap(v.id));
-    return [names.slice(0, 5), names.slice(5), ["🔇 Off", "✅ Done"]];
+    return [names.slice(0, 4), names.slice(4), ["🔇 Off", "✅ Done"]];
   }
 
   const checkin = await getCheckin(env);
