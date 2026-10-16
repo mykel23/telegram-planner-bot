@@ -261,6 +261,12 @@ export async function findNearbyStores(env: Env, area: Area): Promise<string[]> 
   return [];
 }
 
+/** Forgets the ZIP code and its nearby stores. Stores already used stay as buttons. */
+export async function clearArea(env: Env): Promise<void> {
+  await setState(env.DB, AREA_KEY, "");
+  await setState(env.DB, NEARBY_KEY, "");
+}
+
 /** Saves the ZIP code and the stores near it. */
 export async function setArea(env: Env, area: Area, nearby: string[]): Promise<void> {
   await setState(env.DB, AREA_KEY, JSON.stringify(area));
@@ -373,13 +379,16 @@ export interface GroceryReply {
 export async function groceryView(env: Env): Promise<GroceryReply> {
   const [items, stores, area] = [await listGroceries(env.DB), await allStores(env), await getArea(env)];
   const storeButtons = pairs(stores.slice(0, 16).map((s, i) => ({ text: `🏪 ${s.slice(0, 24)}`, data: `gs:${i}` })));
-  const extras: InlineButton[] = [{ text: "➕ Add a store", data: "gnew" }, { text: area ? "📍 Change ZIP" : "📍 Stores near me", data: "gzip" }];
+  const extras: InlineButton[][] = [
+    [{ text: "➕ Add a store", data: "gnew" }, { text: area ? "📍 Change ZIP" : "📍 Stores near me", data: "gzip" }],
+    ...(area ? [[{ text: `🗑 Remove ZIP ${area.zip}`, data: "gzipdel" }]] : []),
+  ];
   const near = area ? ` near ${escapeHtml(area.name)}` : "";
   const choose = stores.length
     ? `<b>Choose a store${near}</b> to see what you've bought there and add items, or add a new store.`
     : `<b>Add a store</b> to get started, or tap 📍 to find the stores near you.`;
   if (items.length === 0) {
-    return { text: `🛒 <b>Grocery list</b>\n<i>Empty.</i>\n\n${choose}`, inline: [...storeButtons, extras] };
+    return { text: `🛒 <b>Grocery list</b>\n<i>Empty.</i>\n\n${choose}`, inline: [...storeButtons, ...extras] };
   }
   const groups = new Map<string, Grocery[]>();
   for (const g of items) groups.set(historyKey(g.store), [...(groups.get(historyKey(g.store)) ?? []), g]);
@@ -388,7 +397,7 @@ export async function groceryView(env: Env): Promise<GroceryReply> {
     [...groups].map(([store, list]) => `<b>${escapeHtml(store)}</b>\n${list.map((g) => `• ${escapeHtml(g.item)}`).join("\n")}`).join("\n\n") +
     `\n\n<i>Tap ✅ when an item is in your cart.</i>\n${choose}`;
   const checkOffs = pairs(items.slice(0, 40).map((g) => ({ text: `✅ ${g.item.slice(0, 28)}`, data: `g:${g.id}` })));
-  return { text, inline: [...checkOffs, ...storeButtons, extras, [{ text: "🧹 Clear all", data: "gclear" }]] };
+  return { text, inline: [...checkOffs, ...storeButtons, ...extras, [{ text: "🧹 Clear all", data: "gclear" }]] };
 }
 
 /** Callback id for a store: its position among the store buttons. */

@@ -58,6 +58,7 @@ import {
   getCurrentStore,
   getPending,
   allStores,
+  clearArea,
   ZIP_QUESTION,
   findNearbyStores,
   getArea,
@@ -228,6 +229,12 @@ async function handleButtonTap(env: Env, tap: NonNullable<TelegramUpdate["callba
     await startPicker(env, "grocery_store");
     await sendMessage(env, owner, storeQuestion([], (await allStores(env)).length > 0), await keyboardFor(env));
     return;
+  } else if (kind === "gzipdel") {
+    await clearArea(env);
+    // Don't ask for a ZIP code again unless asked to.
+    await setState(env.DB, ZIP_SKIPPED_KEY, "1");
+    toast = "🗑 ZIP code removed";
+    redraw = await groceryView(env);
   } else if (kind === "gzip") {
     await answerCallback(env, tap.id);
     await startPicker(env, "grocery_zip");
