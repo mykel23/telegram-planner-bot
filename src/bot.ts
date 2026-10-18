@@ -7,6 +7,7 @@ import {
   addTask,
   clampRank,
   clearGroceries,
+  clearStoreGroceries,
   deleteGrocery,
   deleteMemory,
   getTask,
@@ -66,7 +67,9 @@ import {
   parseZip,
   setArea,
   groceryModeExpired,
+  chooseStoreView,
   groceryView,
+  storeListView,
   looksLikePlannerMessage,
   stripGroceryPrefix,
   pastItem,
@@ -204,12 +207,31 @@ async function handleButtonTap(env: Env, tap: NonNullable<TelegramUpdate["callba
     }
     if (view && isView(view)) redraw = await renderView(env, view);
   } else if (kind === "g") {
+    // ✅ an item. Newer buttons carry the store, so only that store's list is redrawn.
     await deleteGrocery(env.DB, Number(id));
     toast = "🛒 Checked off";
-    redraw = await groceryView(env);
+    const store = view === undefined ? undefined : await storeFromId(env, view);
+    redraw = store === undefined ? await groceryView(env) : await storeListView(env, store);
   } else if (kind === "gclear") {
     await clearGroceries(env.DB);
     toast = "🧹 List cleared";
+    redraw = await groceryView(env);
+  } else if (kind === "gcl") {
+    const store = await storeFromId(env, id);
+    if (store !== undefined) {
+      await clearStoreGroceries(env.DB, store);
+      toast = "🧹 List cleared";
+      redraw = await storeListView(env, store);
+    }
+  } else if (kind === "gshop") {
+    // Shopping Mode: pick which store's list to shop from.
+    await cancelPicker(env);
+    await setCurrentStore(env, undefined);
+    redraw = await chooseStoreView(env);
+  } else if (kind === "gl") {
+    const store = await storeFromId(env, id);
+    if (store !== undefined) redraw = await storeListView(env, store);
+  } else if (kind === "gmenu") {
     redraw = await groceryView(env);
   } else if (kind === "gs") {
     // ➕ a store: show what was bought there before.
@@ -250,9 +272,11 @@ async function handleButtonTap(env: Env, tap: NonNullable<TelegramUpdate["callba
       redraw = await storeView(env, store);
     }
   } else if (kind === "gdone") {
+    // 📋 Show list: just the list for the store being added to.
     await cancelPicker(env);
     await setCurrentStore(env, undefined);
-    redraw = await groceryView(env);
+    const store = id === undefined ? undefined : await storeFromId(env, id);
+    redraw = store === undefined ? await groceryView(env) : await storeListView(env, store);
   }
 
   await answerCallback(env, tap.id, toast);
@@ -425,10 +449,11 @@ export async function respond(env: Env, text: string, chatId: number | string = 
     await setCurrentStore(env, undefined);
     picker = null;
   } else if (picker?.kind === "grocery_items") {
-    if (/^(done|that'?s (all|it)|nothing|no)[.!]*$/i.test(stripButton(text))) {
+    if (/^(done|that'?s (all|it)|nothing|no|show( my)? list)[.!]*$/i.test(stripButton(text))) {
+      const store = await getCurrentStore(env);
       await cancelPicker(env);
       await setCurrentStore(env, undefined);
-      return groceryView(env);
+      return store === undefined ? groceryView(env) : storeListView(env, store);
     }
     return addGroceryItems(env, splitGroceryItems(stripGroceryPrefix(text)), await getCurrentStore(env));
   }

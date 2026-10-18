@@ -386,6 +386,12 @@ export async function clearGroceries(db: D1Database): Promise<void> {
   await db.prepare(`DELETE FROM groceries`).run();
 }
 
+/** Clears one store's list (null = "Any store"). */
+export async function clearStoreGroceries(db: D1Database, store: string | null): Promise<void> {
+  if (store === null) await db.prepare(`DELETE FROM groceries WHERE store IS NULL`).run();
+  else await db.prepare(`DELETE FROM groceries WHERE store = ?`).bind(store).run();
+}
+
 // ---------- key/value state ----------
 
 export async function getState(db: D1Database, key: string): Promise<string | null> {

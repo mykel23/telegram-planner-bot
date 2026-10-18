@@ -398,9 +398,16 @@ export interface GroceryReply {
   inline: InlineButton[][];
 }
 
+/** The list's items grouped by store, in list order. */
+function byStore(items: Grocery[]): Map<string | null, Grocery[]> {
+  const groups = new Map<string | null, Grocery[]>();
+  for (const g of items) groups.set(g.store, [...(groups.get(g.store) ?? []), g]);
+  return groups;
+}
+
 /**
- * The grocery list. It leads with the stores: tap one to see past items and add
- * more, or add a new store. Items on the list get a ✅ to check off.
+ * The grocery menu. It leads with the stores: tap one to see past items and add
+ * more, or add a new store. 🛍 Shopping Mode opens the lists for the store trip.
  */
 export async function groceryView(env: Env): Promise<GroceryReply> {
   const [items, stores, ranked, area] = [await listGroceries(env.DB), await allStores(env), await rankedStores(env), await getArea(env)];
@@ -419,14 +426,44 @@ export async function groceryView(env: Env): Promise<GroceryReply> {
   if (items.length === 0) {
     return { text: `🛒 <b>Grocery list</b>\n<i>Empty.</i>\n\n${choose}`, inline: [...storeButtons, ...extras] };
   }
-  const groups = new Map<string, Grocery[]>();
-  for (const g of items) groups.set(historyKey(g.store), [...(groups.get(historyKey(g.store)) ?? []), g]);
+  const lists = [...byStore(items)].map(([store, list]) => `${escapeHtml(historyKey(store))} (${list.length})`);
   const text =
-    `🛒 <b>Grocery list</b> (${items.length})\n\n` +
-    [...groups].map(([store, list]) => `<b>${escapeHtml(store)}</b>\n${list.map((g) => `• ${escapeHtml(g.item)}`).join("\n")}`).join("\n\n") +
-    `\n\n<i>Tap ✅ when an item is in your cart.</i>\n${choose}`;
-  const checkOffs = pairs(items.slice(0, 40).map((g) => ({ text: `✅ ${g.item.slice(0, 28)}`, data: `g:${g.id}` })));
-  return { text, inline: [...checkOffs, ...storeButtons, ...extras, [{ text: "🧹 Clear all", data: "gclear" }]] };
+    `🛒 <b>Grocery list</b>\nYour lists: ${lists.join(", ")}\n\n` +
+    `Tap <b>🛍 Shopping Mode</b> when you're at the store.\n${choose}`;
+  return { text, inline: [[{ text: "🛍 Shopping Mode", data: "gshop" }], ...storeButtons, ...extras] };
+}
+
+/** Shopping Mode, step 1: every list as bullets, and a button per store to open its list. */
+export async function chooseStoreView(env: Env): Promise<GroceryReply> {
+  const groups = byStore(await listGroceries(env.DB));
+  const back = [{ text: "⬅️ Grocery menu", data: "gmenu" }];
+  if (groups.size === 0) {
+    return { text: `🛍 <b>Shopping Mode</b>\n<i>All your lists are empty.</i>`, inline: [back] };
+  }
+  const text =
+    `🛍 <b>Shopping Mode</b>\n<b>Choose Store</b>\n\n` +
+    [...groups].map(([store, list]) => `<b>${escapeHtml(historyKey(store))}</b>\n${list.map((g) => `• ${escapeHtml(g.item)}`).join("\n")}`).join("\n\n");
+  const buttons: InlineButton[] = [];
+  for (const [store, list] of groups) {
+    buttons.push({ text: `🛒 ${historyKey(store).slice(0, 22)} (${list.length})`, data: `gl:${await storeId(env, store)}` });
+  }
+  return { text, inline: [...pairs(buttons), back] };
+}
+
+/** Shopping Mode, step 2: one store's list, with a ✅ per item to check it off. */
+export async function storeListView(env: Env, store: string | null): Promise<GroceryReply> {
+  const [items, sid] = [(await listGroceries(env.DB)).filter((g) => g.store === store), await storeId(env, store)];
+  const name = escapeHtml(historyKey(store));
+  const back = [{ text: "🔙 Choose Store", data: "gshop" }];
+  if (items.length === 0) {
+    return { text: `🛒 <b>${name}</b>\n🎉 All done here. Nothing left on this list.`, inline: [back] };
+  }
+  const text =
+    `🛒 <b>${name}</b> (${items.length})\n` +
+    items.map((g) => `• ${escapeHtml(g.item)}`).join("\n") +
+    `\n\n<i>Tap ✅ when an item is in your cart.</i>`;
+  const checkOffs = pairs(items.slice(0, 40).map((g) => ({ text: `✅ ${g.item.slice(0, 28)}`, data: `g:${g.id}:${sid}` })));
+  return { text, inline: [...checkOffs, back, [{ text: "🧹 Clear this list", data: `gcl:${sid}` }]] };
 }
 
 /** Callback id for a store: its position among the store buttons. */
@@ -466,11 +503,11 @@ export async function storeView(env: Env, store: string | null, intro = ""): Pro
     past.length
       ? `Tap what you need from past trips, or type new items (like <i>milk, eggs</i>).`
       : `Type the items you need, like <i>milk, eggs, bread</i>. I'll remember them for next time.`,
-    `<i>Tap 📋 Done when you're finished.</i>`,
+    `<i>Tap 📋 Show list when you're finished.</i>`,
   ].filter((l, i) => l !== "" || i > 0);
   const inline = [
     ...pairs(past.map(({ item, i }) => ({ text: `➕ ${item.slice(0, 28)}`, data: `ga:${sid}:${i}` }))),
-    [{ text: "📋 Done, show my list", data: "gdone" }],
+    [{ text: "📋 Show list", data: `gdone:${sid}` }],
   ];
   return { text: lines.join("\n").trim(), inline };
 }
