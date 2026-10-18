@@ -45,8 +45,27 @@ export function splitGroceryItems(text: string): string[] {
   }
   return parts
     .map((s) => s.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, "").trim())
-    .filter((s) => s.length > 0 && s.length <= 60);
+    .filter((s) => s.length > 0 && s.length <= 60)
+    .map(titleCase);
 }
+
+/** Small words that stay lowercase unless they start the item. */
+const SMALL_WORDS = new Set(["and", "or", "of", "the", "a", "an", "with", "in", "on", "for", "to", "n"]);
+
+/** "mac and cheese" -> "Mac and Cheese". Letters already capitalized ("BBQ") are kept. */
+export function titleCase(item: string): string {
+  let first = true;
+  return item.replace(/(^|[\s\-\/(])(\p{L}[\p{L}']*)/gu, (_, before: string, word: string) => {
+    const isFirst = first;
+    first = false;
+    const lower = word.toLowerCase();
+    if (!isFirst && SMALL_WORDS.has(lower)) return before + lower;
+    return before + word.charAt(0).toUpperCase() + word.slice(1);
+  });
+}
+
+/** An item as shown in a message. */
+const show = (item: string) => escapeHtml(titleCase(item));
 
 async function readJson<T>(env: Env, key: string, empty: T): Promise<T> {
   const raw = await getState(env.DB, key);
@@ -367,7 +386,7 @@ export function getPending(env: Env): Promise<string[]> {
 }
 
 export function storeQuestion(items: string[], hasStores: boolean): string {
-  const what = items.length ? `Which store are you getting ${items.map((i) => `<b>${escapeHtml(i)}</b>`).join(", ")} from?` : "Which store would you like to add?";
+  const what = items.length ? `Which store are you getting ${items.map((i) => `<b>${show(i)}</b>`).join(", ")} from?` : "Which store would you like to add?";
   return hasStores
     ? `🛒 ${what} Tap one, or type a new store's name.`
     : `🛒 ${what} Type the store's name (I'll save it as a button), or tap <b>${ANY_STORE}</b>.`;
@@ -376,7 +395,7 @@ export function storeQuestion(items: string[], hasStores: boolean): string {
 export function addedText(added: Grocery[]): string {
   if (added.length === 0) return "";
   const store = added[0].store ?? ANY_STORE;
-  return `➕ Added ${added.map((g) => escapeHtml(g.item)).join(", ")} → <b>${escapeHtml(store)}</b>`;
+  return `➕ Added ${added.map((g) => show(g.item)).join(", ")} → <b>${escapeHtml(store)}</b>`;
 }
 
 /** Store buttons for the store question, three to a row. */
@@ -442,7 +461,7 @@ export async function chooseStoreView(env: Env): Promise<GroceryReply> {
   }
   const text =
     `🛍 <b>Shopping Mode</b>\n<b>Choose Store</b>\n\n` +
-    [...groups].map(([store, list]) => `<b>${escapeHtml(historyKey(store))}</b>\n${list.map((g) => `• ${escapeHtml(g.item)}`).join("\n")}`).join("\n\n");
+    [...groups].map(([store, list]) => `<b>${escapeHtml(historyKey(store))}</b>\n${list.map((g) => `• ${show(g.item)}`).join("\n")}`).join("\n\n");
   const buttons: InlineButton[] = [];
   for (const [store, list] of groups) {
     buttons.push({ text: `🛒 ${historyKey(store).slice(0, 22)} (${list.length})`, data: `gl:${await storeId(env, store)}` });
@@ -460,9 +479,9 @@ export async function storeListView(env: Env, store: string | null): Promise<Gro
   }
   const text =
     `🛒 <b>${name}</b> (${items.length})\n` +
-    items.map((g) => `• ${escapeHtml(g.item)}`).join("\n") +
+    items.map((g) => `• ${show(g.item)}`).join("\n") +
     `\n\n<i>Tap ✅ when an item is in your cart.</i>`;
-  const checkOffs = pairs(items.slice(0, 40).map((g) => ({ text: `✅ ${g.item.slice(0, 28)}`, data: `g:${g.id}:${sid}` })));
+  const checkOffs = pairs(items.slice(0, 40).map((g) => ({ text: `✅ ${titleCase(g.item).slice(0, 28)}`, data: `g:${g.id}:${sid}` })));
   return { text, inline: [...checkOffs, back, [{ text: "🧹 Clear this list", data: `gcl:${sid}` }]] };
 }
 
@@ -498,7 +517,7 @@ export async function storeView(env: Env, store: string | null, intro = ""): Pro
   const lines = [
     intro,
     `🛒 <b>${name}</b>`,
-    onList.length ? `On your list: ${onList.map((g) => escapeHtml(g.item)).join(", ")}` : `<i>Nothing on the list for ${name} yet.</i>`,
+    onList.length ? `On your list: ${onList.map((g) => show(g.item)).join(", ")}` : `<i>Nothing on the list for ${name} yet.</i>`,
     "",
     past.length
       ? `Tap what you need from past trips, or type new items (like <i>milk, eggs</i>).`
@@ -506,7 +525,7 @@ export async function storeView(env: Env, store: string | null, intro = ""): Pro
     `<i>Tap 📋 Show list when you're finished.</i>`,
   ].filter((l, i) => l !== "" || i > 0);
   const inline = [
-    ...pairs(past.map(({ item, i }) => ({ text: `➕ ${item.slice(0, 28)}`, data: `ga:${sid}:${i}` }))),
+    ...pairs(past.map(({ item, i }) => ({ text: `➕ ${titleCase(item).slice(0, 28)}`, data: `ga:${sid}:${i}` }))),
     [{ text: "📋 Show list", data: `gdone:${sid}` }],
   ];
   return { text: lines.join("\n").trim(), inline };

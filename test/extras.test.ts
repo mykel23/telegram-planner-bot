@@ -1,17 +1,26 @@
 import { describe, expect, it } from "vitest";
 import { interpretWithRules } from "../src/fallback";
-import { addedText, areaFromZipResponse, isKnownChain, parseZip, rankStores, photonToOsm, splitGroceryItems, storeQuestion, storeRows, storesFromOsm } from "../src/grocery";
+import { addedText, titleCase, areaFromZipResponse, isKnownChain, parseZip, rankStores, photonToOsm, splitGroceryItems, storeQuestion, storeRows, storesFromOsm } from "../src/grocery";
 import { finishButtons } from "../src/views";
 import { describeWeather, weatherLine } from "../src/weather";
 import type { Task } from "../src/env";
 
 describe("grocery list", () => {
   it("splits several items in one message", () => {
-    expect(splitGroceryItems("milk, eggs and bread")).toEqual(["milk", "eggs", "bread"]);
-    expect(splitGroceryItems("milk and eggs")).toEqual(["milk", "eggs"]);
-    expect(splitGroceryItems("mac and cheese, rice")).toEqual(["mac and cheese", "rice"]);
-    expect(splitGroceryItems("- apples\n- bananas\n1. coffee")).toEqual(["apples", "bananas", "coffee"]);
+    expect(splitGroceryItems("milk, eggs and bread")).toEqual(["Milk", "Eggs", "Bread"]);
+    expect(splitGroceryItems("milk and eggs")).toEqual(["Milk", "Eggs"]);
+    expect(splitGroceryItems("mac and cheese, rice")).toEqual(["Mac and Cheese", "Rice"]);
+    expect(splitGroceryItems("- apples\n- bananas\n1. coffee")).toEqual(["Apples", "Bananas", "Coffee"]);
     expect(splitGroceryItems("   ")).toEqual([]);
+  });
+
+  it("capitalizes every word of an item", () => {
+    expect(titleCase("ground beef")).toBe("Ground Beef");
+    expect(titleCase("half-and-half")).toBe("Half-and-Half");
+    expect(titleCase("cream of the crop")).toBe("Cream of the Crop");
+    expect(titleCase("the good stuff")).toBe("The Good Stuff");
+    expect(titleCase("BBQ sauce")).toBe("BBQ Sauce");
+    expect(titleCase("trader joe's salsa")).toBe("Trader Joe's Salsa");
   });
 
   it("offers saved stores as buttons, plus Any store", () => {
@@ -20,11 +29,11 @@ describe("grocery list", () => {
   });
 
   it("asks which store, and says what was added", () => {
-    expect(storeQuestion(["milk"], true)).toContain("<b>milk</b>");
+    expect(storeQuestion(["milk"], true)).toContain("<b>Milk</b>");
     expect(storeQuestion([], false)).toContain("Type the store's name");
     expect(storeQuestion([], true)).toBe("🛒 Which store would you like to add? Tap one, or type a new store's name.");
     expect(addedText([{ id: 0, item: "milk", store: "Walmart" }, { id: 0, item: "eggs", store: "Walmart" }])).toBe(
-      "➕ Added milk, eggs → <b>Walmart</b>",
+      "➕ Added Milk, Eggs → <b>Walmart</b>",
     );
     expect(addedText([])).toBe("");
   });
