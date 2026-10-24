@@ -53,6 +53,18 @@ const SCHEMA = [
     store TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
+  `CREATE TABLE IF NOT EXISTS recipes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS recipe_ingredients (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    recipe_id INTEGER NOT NULL,
+    item TEXT NOT NULL,
+    checked INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
   `CREATE TABLE IF NOT EXISTS sends (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL,
@@ -390,6 +402,74 @@ export async function clearGroceries(db: D1Database): Promise<void> {
 export async function clearStoreGroceries(db: D1Database, store: string | null): Promise<void> {
   if (store === null) await db.prepare(`DELETE FROM groceries WHERE store IS NULL`).run();
   else await db.prepare(`DELETE FROM groceries WHERE store = ?`).bind(store).run();
+}
+
+// ---------- recipes ----------
+
+export interface Recipe {
+  id: number;
+  name: string;
+}
+
+export interface Ingredient {
+  id: number;
+  recipe_id: number;
+  item: string;
+  /** 1 once it's been checked off. Checking off never deletes the ingredient. */
+  checked: number;
+}
+
+export async function listRecipes(db: D1Database): Promise<Recipe[]> {
+  const { results } = await db.prepare(`SELECT id, name FROM recipes ORDER BY name COLLATE NOCASE, id`).all<Recipe>();
+  return results;
+}
+
+export async function getRecipe(db: D1Database, id: number): Promise<Recipe | null> {
+  return db.prepare(`SELECT id, name FROM recipes WHERE id = ?`).bind(id).first<Recipe>();
+}
+
+export async function addRecipe(db: D1Database, name: string): Promise<Recipe> {
+  const row = await db.prepare(`INSERT INTO recipes (name) VALUES (?) RETURNING id, name`).bind(name.trim()).first<Recipe>();
+  return row!;
+}
+
+export async function deleteRecipe(db: D1Database, id: number): Promise<void> {
+  await db.batch([
+    db.prepare(`DELETE FROM recipe_ingredients WHERE recipe_id = ?`).bind(id),
+    db.prepare(`DELETE FROM recipes WHERE id = ?`).bind(id),
+  ]);
+}
+
+export async function listIngredients(db: D1Database, recipeId: number): Promise<Ingredient[]> {
+  const { results } = await db
+    .prepare(`SELECT id, recipe_id, item, checked FROM recipe_ingredients WHERE recipe_id = ? ORDER BY id`)
+    .bind(recipeId)
+    .all<Ingredient>();
+  return results;
+}
+
+export async function getIngredient(db: D1Database, id: number): Promise<Ingredient | null> {
+  return db.prepare(`SELECT id, recipe_id, item, checked FROM recipe_ingredients WHERE id = ?`).bind(id).first<Ingredient>();
+}
+
+export async function addIngredients(db: D1Database, recipeId: number, items: string[]): Promise<void> {
+  if (items.length === 0) return;
+  await db.batch(
+    items.map((item) => db.prepare(`INSERT INTO recipe_ingredients (recipe_id, item) VALUES (?, ?)`).bind(recipeId, item.trim())),
+  );
+}
+
+export async function toggleIngredient(db: D1Database, id: number): Promise<void> {
+  await db.prepare(`UPDATE recipe_ingredients SET checked = 1 - checked WHERE id = ?`).bind(id).run();
+}
+
+export async function deleteIngredient(db: D1Database, id: number): Promise<void> {
+  await db.prepare(`DELETE FROM recipe_ingredients WHERE id = ?`).bind(id).run();
+}
+
+/** Unchecks every ingredient of a dish, ready for the next time it's made. */
+export async function resetIngredients(db: D1Database, recipeId: number): Promise<void> {
+  await db.prepare(`UPDATE recipe_ingredients SET checked = 0 WHERE recipe_id = ?`).bind(recipeId).run();
 }
 
 // ---------- key/value state ----------

@@ -180,8 +180,18 @@ export interface Picker {
    * "add": the next message is a task to add.
    * "grocery_items" / "grocery_store": adding to the grocery list.
    * "weather_city": the next message (or shared location) is the weather city.
+   * "recipe_name" / "recipe_items": the next message names a new dish, or lists its ingredients.
    */
-  kind: "voice" | "capacity" | "add" | "grocery_items" | "grocery_store" | "grocery_zip" | "weather_city";
+  kind:
+    | "voice"
+    | "capacity"
+    | "add"
+    | "grocery_items"
+    | "grocery_store"
+    | "grocery_zip"
+    | "weather_city"
+    | "recipe_name"
+    | "recipe_items";
 }
 
 export async function getPicker(env: Env): Promise<Picker | null> {
