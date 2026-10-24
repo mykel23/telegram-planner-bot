@@ -176,6 +176,7 @@ export const HELP_TEXT = [
   "<b>Commands</b>",
   "/today /week /month /lists: show your lists",
   "/grocery: your grocery list, by store",
+  "/recipes: your dishes, with ingredients to check off while you shop",
   "/weather: set your city for the morning forecast",
   "/edit: change a task's rank, days, name, list or category",
   "/repeats: your repeating tasks",

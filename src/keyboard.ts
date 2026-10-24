@@ -87,6 +87,8 @@ export async function keyboardFor(env: Env): Promise<Keyboard> {
   if (picker?.kind === "grocery_items") return [["Done"]];
   if (picker?.kind === "grocery_store") return storeRows(await rankedStores(env));
   if (picker?.kind === "grocery_zip") return [["Skip"]];
+  if (picker?.kind === "recipe_name") return [["Cancel"]];
+  if (picker?.kind === "recipe_items") return [["Done"]];
   if (picker?.kind === "weather_city") return { location: "📍 Share my location", rows: [["Cancel"]] };
   return { menu: MENU_ROWS };
 }

@@ -9,6 +9,12 @@ import {
   clearGroceries,
   clearStoreGroceries,
   deleteGrocery,
+  deleteIngredient,
+  deleteRecipe,
+  getIngredient,
+  getRecipe,
+  resetIngredients,
+  toggleIngredient,
   deleteMemory,
   getTask,
   eventsSince,
@@ -82,6 +88,20 @@ import {
   storeView,
 } from "./grocery";
 import { keyboardFor } from "./keyboard";
+import {
+  addRecipeItems,
+  createRecipe,
+  deleteQuestion,
+  dishView,
+  getCurrentRecipe,
+  groceryPickView,
+  ingredientsNotOnList,
+  recipeModeExpired,
+  recipesView,
+  removeView,
+  setCurrentRecipe,
+  storePickView,
+} from "./recipes";
 import { type ViewReply, isView, renderView } from "./views";
 import { WEATHER_QUESTION, findPlace, getPlace, morningWeather, setPlace } from "./weather";
 import { MENU_ROWS, menuCommand, menuGreeting } from "./menu";
@@ -196,7 +216,16 @@ async function handleButtonTap(env: Env, tap: NonNullable<TelegramUpdate["callba
   let toast = "";
   let redraw: ViewReply | null = null;
 
-  if (kind === "d") {
+  if (kind.startsWith("r")) {
+    const result = await handleRecipeTap(env, kind, id, view);
+    if (result.send) {
+      await answerCallback(env, tap.id);
+      await sendMessage(env, owner, result.send, await keyboardFor(env));
+      return;
+    }
+    toast = result.toast;
+    redraw = result.redraw;
+  } else if (kind === "d") {
     const task = await getTask(env.DB, Number(id));
     if (task && task.status !== "done") {
       await updateTask(env.DB, task.id, { status: "done" });
@@ -281,6 +310,102 @@ async function handleButtonTap(env: Env, tap: NonNullable<TelegramUpdate["callba
 
   await answerCallback(env, tap.id, toast);
   if (redraw) await editMessage(env, owner, tap.message.message_id, redraw.text, { inline: redraw.inline });
+}
+
+/**
+ * A tap on a Recipes button. Most redraw the same message; ➕ Add a dish and
+ * ➕ Add ingredients send a new question instead, since the answer is typed.
+ */
+async function handleRecipeTap(
+  env: Env,
+  kind: string,
+  id: string | undefined,
+  extra: string | undefined,
+): Promise<{ toast: string; redraw: ViewReply | null; send?: string }> {
+  const recipeId = Number(id);
+  // Any recipe button other than ➕ ends typing ingredients.
+  const stopTyping = async () => {
+    const picker = await getPicker(env);
+    if (picker?.kind === "recipe_items" || picker?.kind === "recipe_name") await cancelPicker(env);
+    await setCurrentRecipe(env, null);
+  };
+  switch (kind) {
+    case "rm":
+      await stopTyping();
+      return { toast: "", redraw: await recipesView(env) };
+    case "rnew":
+      await Promise.all([cancelCheckin(env), cancelEdit(env), cancelReview(env)]);
+      await setCurrentRecipe(env, null);
+      await startPicker(env, "recipe_name");
+      return { toast: "", redraw: null, send: `🍳 What's the dish called? Type its name, like <i>Chicken Tacos</i>.` };
+    case "r":
+      await stopTyping();
+      return { toast: "", redraw: await dishView(env, recipeId) };
+    case "rc": {
+      const ingredient = await getIngredient(env.DB, recipeId);
+      if (!ingredient) return { toast: "That ingredient was removed.", redraw: null };
+      await toggleIngredient(env.DB, ingredient.id);
+      return { toast: ingredient.checked ? "⬜ Unchecked" : "✅ Checked off", redraw: await dishView(env, ingredient.recipe_id) };
+    }
+    case "rr":
+      await resetIngredients(env.DB, recipeId);
+      return { toast: "🔄 All unchecked", redraw: await dishView(env, recipeId) };
+    case "ra": {
+      const recipe = await getRecipe(env.DB, recipeId);
+      if (!recipe) return { toast: "That dish was deleted.", redraw: await recipesView(env) };
+      await Promise.all([cancelCheckin(env), cancelEdit(env), cancelReview(env)]);
+      await setCurrentRecipe(env, recipe.id);
+      await startPicker(env, "recipe_items");
+      return {
+        toast: "",
+        redraw: null,
+        send: `🍳 Type the ingredients for <b>${escapeHtml(recipe.name)}</b>, like <i>tortillas, ground beef, cheese</i>. Tap <b>Done</b> when you're finished.`,
+      };
+    }
+    case "rx":
+      await stopTyping();
+      return { toast: "", redraw: await removeView(env, recipeId) };
+    case "rxi": {
+      const ingredient = await getIngredient(env.DB, recipeId);
+      if (!ingredient) return { toast: "", redraw: null };
+      await deleteIngredient(env.DB, ingredient.id);
+      return { toast: `❌ Removed ${ingredient.item}`, redraw: await removeView(env, ingredient.recipe_id) };
+    }
+    case "rd": {
+      await stopTyping();
+      const recipe = await getRecipe(env.DB, recipeId);
+      return { toast: "", redraw: recipe ? deleteQuestion(recipe) : await recipesView(env) };
+    }
+    case "rdy": {
+      const recipe = await getRecipe(env.DB, recipeId);
+      if (recipe) await deleteRecipe(env.DB, recipe.id);
+      return { toast: recipe ? `🗑 Deleted ${recipe.name}` : "", redraw: await recipesView(env) };
+    }
+    case "rg":
+      await stopTyping();
+      return { toast: "", redraw: await storePickView(env, recipeId) };
+    case "rgs": {
+      const store = extra === undefined ? undefined : await storeFromId(env, extra);
+      if (store === undefined) return { toast: "", redraw: await storePickView(env, recipeId) };
+      return { toast: "", redraw: await groceryPickView(env, recipeId, store) };
+    }
+    case "rgi": {
+      // ➕ one ingredient onto the chosen store's list.
+      const ingredient = await getIngredient(env.DB, recipeId);
+      const store = extra === undefined ? undefined : await storeFromId(env, extra);
+      if (!ingredient || store === undefined) return { toast: "", redraw: null };
+      await addItems(env, [ingredient.item], store);
+      return { toast: `➕ ${ingredient.item} → ${store ?? ANY_STORE}`, redraw: await groceryPickView(env, ingredient.recipe_id, store) };
+    }
+    case "rga": {
+      const store = extra === undefined ? undefined : await storeFromId(env, extra);
+      if (store === undefined) return { toast: "", redraw: null };
+      const items = await ingredientsNotOnList(env, recipeId, store);
+      await addItems(env, items, store);
+      return { toast: `➕ Added ${items.length} to ${store ?? ANY_STORE}`, redraw: await groceryPickView(env, recipeId, store) };
+    }
+  }
+  return { toast: "", redraw: null };
 }
 
 const ZIP_SKIPPED_KEY = "grocery_zip_skipped";
@@ -375,6 +500,10 @@ export async function respond(env: Env, text: string, chatId: number | string = 
       await startPicker(env, "grocery_items");
       return groceryView(env);
     }
+    case "/recipes":
+    case "/recipe":
+      await setCurrentRecipe(env, null);
+      return recipesView(env);
     case "/weather":
       if (await getCheckin(env)) return "Finish the check-in first, or send /cancel to stop it.";
       await Promise.all([cancelEdit(env), cancelReview(env)]);
@@ -456,6 +585,36 @@ export async function respond(env: Env, text: string, chatId: number | string = 
       return store === undefined ? groceryView(env) : storeListView(env, store);
     }
     return addGroceryItems(env, splitGroceryItems(stripGroceryPrefix(text)), await getCurrentStore(env));
+  }
+  if (picker?.kind === "recipe_name") {
+    await cancelPicker(env);
+    if (/^(cancel|never ?mind|skip|no)[.!]*$/i.test(stripButton(text))) return recipesView(env);
+    const recipe = await createRecipe(env, text);
+    if (!recipe) return recipesView(env);
+    await setCurrentRecipe(env, recipe.id);
+    await startPicker(env, "recipe_items");
+    return dishView(env, recipe.id, `🍳 Saved <b>${escapeHtml(recipe.name)}</b>.\n`, true);
+  }
+  if (picker?.kind === "recipe_items") {
+    const current = await getCurrentRecipe(env);
+    const done = /^(done|that'?s (all|it)|nothing|no|finished)[.!]*$/i.test(stripButton(text));
+    if (recipeModeExpired(current) || (!done && looksLikePlannerMessage(text))) {
+      // Back to normal: this message is for the planner, not the recipe.
+      await cancelPicker(env);
+      await setCurrentRecipe(env, null);
+      picker = null;
+    } else if (done) {
+      await cancelPicker(env);
+      await setCurrentRecipe(env, null);
+      return dishView(env, current!.id);
+    } else {
+      const added = await addRecipeItems(env, current!.id, text);
+      await setCurrentRecipe(env, current!.id);
+      const intro = added.length
+        ? `➕ Added ${added.map((i) => escapeHtml(i)).join(", ")}\n`
+        : `Those are already in this recipe.\n`;
+      return dishView(env, current!.id, intro, true);
+    }
   }
   if (picker?.kind === "grocery_zip") {
     if (/^(skip|cancel|no|not now)[.!]*$/i.test(stripButton(text))) {
